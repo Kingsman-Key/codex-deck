@@ -1,0 +1,22 @@
+node_modules/
+dist/
+release/
+coverage/
+*.log
+.DS_Store
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
+
+# Local credentials and runtime state must never enter Git.
+auth.json
+secrets.json
+profiles.json
+*.db
+*.db-shm
+*.db-wal
+*.pem
+*.p12
+*.mobileprovision

@@ -1,0 +1,40 @@
+import { describe, expect, it } from "vitest";
+import { validateProfileInput } from "../electron/validation";
+
+describe("validateProfileInput", () => {
+  it("normalizes the DeepSeek preset", () => {
+    const input = validateProfileInput({
+      name: " DeepSeek ",
+      color: "#7cffb2",
+      provider: "openrouter-deepseek",
+    });
+    expect(input.name).toBe("DeepSeek");
+    expect(input.color).toBe("#7CFFB2");
+    expect(input.baseUrl).toBe("https://openrouter.ai/api/v1");
+    expect(input.model).toBe("deepseek/deepseek-v4.1-flash");
+  });
+
+  it("rejects insecure remote endpoints", () => {
+    expect(() =>
+      validateProfileInput({
+        name: "Unsafe",
+        color: "#7CFFB2",
+        provider: "custom",
+        baseUrl: "http://api.example.com/v1",
+        model: "example",
+      }),
+    ).toThrow("HTTPS");
+  });
+
+  it("allows a local HTTP proxy", () => {
+    expect(
+      validateProfileInput({
+        name: "Local",
+        color: "#7CFFB2",
+        provider: "custom",
+        baseUrl: "http://127.0.0.1:4000/v1/",
+        model: "deepseek",
+      }).baseUrl,
+    ).toBe("http://127.0.0.1:4000/v1");
+  });
+});
