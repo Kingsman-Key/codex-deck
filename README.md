@@ -12,7 +12,7 @@
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/Kingsman-Key/codex-deck/releases) 下载最新的 macOS Apple Silicon DMG 或 ZIP。当前构建尚未使用 Apple Developer ID 签名和公证，因此只建议开发者测试使用；首次打开可能需要在 Finder 中右键应用并选择“打开”。
+从 [GitHub Releases](https://github.com/Kingsman-Key/codex-deck/releases) 获取最新发布版本。v0.2.0 当前提供 GitHub 自动生成的源码归档；预构建 DMG/ZIP 因发布时大文件上传链路异常缓慢暂未附加，可以克隆源码后运行 `npm ci` 与 `npm run dist` 在本机生成。当前构建尚未使用 Apple Developer ID 签名和公证，因此只建议开发者测试使用；首次打开可能需要在 Finder 中右键应用并选择“打开”。
 
 ## 已实现
 
