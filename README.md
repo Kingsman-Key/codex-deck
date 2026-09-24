@@ -12,7 +12,7 @@
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/Kingsman-Key/codex-deck/releases) 获取公开版本。预构建 DMG/ZIP 因发布时大文件上传链路异常缓慢暂未附加，可以克隆源码后运行 `npm ci` 与 `npm run dist` 在本机生成。当前构建尚未使用 Apple Developer ID 签名和公证，因此只建议开发者测试使用；首次打开可能需要在 Finder 中右键应用并选择“打开”。
+从 [GitHub Releases](https://github.com/Kingsman-Key/codex-deck/releases) 获取 macOS Apple Silicon 的 DMG/ZIP，或克隆源码后运行 `npm ci` 与 `npm run dist` 在本机生成。当前构建尚未使用 Apple Developer ID 签名和公证，因此只建议开发者测试使用；首次打开可能需要在 Finder 中右键应用并选择“打开”。
 
 ## 已实现
 
@@ -20,6 +20,7 @@
 - Codex Deck 重启后会重新识别仍在运行的 macOS 窗口并按 `--user-data-dir` 聚焦，不会重复启动同一个隔离配置。
 - 受保护的“当前 Codex”入口直接复用原 `~/.codex`，保留旧聊天和当前登录。
 - 其余配置隔离登录、浏览器状态、会话数据库、日志与缓存。
+- 独立配置启动前会安全同步主 Codex 的本地项目目录、排序与展开状态；只迁移目标已有线程的项目归属，不复制设备标识、推送令牌或整份全局状态。
 - ChatGPT 账号：首次打开独立窗口后完成一次正常登录。
 - ChatGPT 账号可选复制当前文件型 `auth.json` 到自己的隔离配置；API profile 缺少桌面登录时也会单次复制，用于通过 Codex 桌面壳的登录门槛，均不修改原文件或覆盖目标已有认证。
 - 隔离配置可一键把当前 Codex 中相同 `model_provider` 的旧会话复制到自己的目录，原目录不做修改。
@@ -77,6 +78,10 @@ DeepSeek 已提供 Responses API，Codex Deck 默认按 DeepSeek 官方 Codex �
 ### 为什么独立窗口看不到旧聊天？
 
 这是隔离生效后的正常边界，不是聊天被删除。不同 `CODEX_HOME` 不共享配置、认证和会话历史；所以原聊天仍在 `~/.codex`，从“当前 Codex”入口打开即可看到。独立窗口不能共享或链接正在写入的 SQLite/会话目录，否则并发运行可能造成串号或状态损坏。API/DeepSeek profile 会在缺少桌面认证时单次复制当前 Codex 的文件型登录，只用于通过桌面壳；模型请求仍由该 profile 的 `model_provider` 和加密 API Key 直接路由到 DeepSeek。点击卡片上的“历史工具”可以迁移旧历史、导出可读副本，或把 A provider 的会话复制给 B provider；这些操作只复制匹配 `model_provider` 的索引、JSONL 和消息库，目标已有记录时会拒绝覆盖。跨 provider 转移主要保证能查看，续写旧会话可能因 `encrypted_content` 无法由另一个后端解密而失败。[Codex 配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)
+
+### 为什么独立窗口只剩“最近聊天”，项目文件夹不见了？
+
+项目文件夹通常仍在本机，丢失的是隔离窗口自己的侧边栏项目目录缓存。v0.3.2 会在目标实例停止时、下一次启动前，从“当前 Codex”同步项目目录、顺序、展开状态和目标已有聊天的项目归属；写入前会保留 `.codex-global-state.json.codex-deck-backup`，不会复制整份账号/设备状态，也不会触碰运行中实例的 SQLite。更新后先关闭对应 DeepSeek/Codex 窗口，再从 Codex Deck 打开一次即可。Codex 的本地项目本来就是由文件夹组成，并在 Projects 视图中显示。[OpenAI：Projects and chats](https://learn.chatgpt.com/docs/projects)
 
 ## 从 CC Switch 导入
 

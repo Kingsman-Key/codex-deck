@@ -36,6 +36,7 @@ import {
   syncProfileHistoryFromMaster,
   transferProfileHistory,
 } from "./history-migration";
+import { syncProjectStateFromMaster } from "./project-state-sync";
 
 let mainWindow: BrowserWindow | null = null;
 let profileStore: ProfileStore;
@@ -100,6 +101,31 @@ async function resolveExecutable(): Promise<string | null> {
   return findDesktopExecutable((await getSettings()).desktopExecutable);
 }
 
+async function prepareProfileForLaunch(
+  profile: Awaited<ReturnType<ProfileStore["get"]>>,
+) {
+  if (profile.runtimeMode !== "native" && !launcher.isRunning(profile.id)) {
+    const targetHome = getProfilePaths(
+      profileStore.profilesDir,
+      profile.id,
+    ).codexHome;
+    await syncProjectStateFromMaster({
+      baseCodexHome,
+      targetCodexHome: targetHome,
+    }).catch((error) => {
+      console.warn(
+        "Could not synchronize the isolated profile project catalog:",
+        error instanceof Error ? error.message : "unknown error",
+      );
+    });
+  }
+  return prepareProfileRuntime(
+    profileStore.profilesDir,
+    baseCodexHome,
+    profile,
+  );
+}
+
 async function handoffContext(
   sourceId: string,
   targetId: string,
@@ -131,11 +157,7 @@ async function handoffContext(
   });
   clipboard.writeText(context);
 
-  const paths = await prepareProfileRuntime(
-    profileStore.profilesDir,
-    baseCodexHome,
-    targetProfile,
-  );
+  const paths = await prepareProfileForLaunch(targetProfile);
   const apiKey = await profileStore.getSecret(targetId);
   const credentialKind =
     targetProfile.credentialKind ??
@@ -212,11 +234,7 @@ function registerIpc(): void {
       throw new Error("没有找到 Codex / ChatGPT 桌面应用，请先在设置中选择可执行文件。");
     }
     const profile = await profileStore.get(id);
-    const paths = await prepareProfileRuntime(
-      profileStore.profilesDir,
-      baseCodexHome,
-      profile,
-    );
+    const paths = await prepareProfileForLaunch(profile);
     const apiKey = await profileStore.getSecret(id);
     const credentialKind =
       profile.credentialKind ??
@@ -393,6 +411,14 @@ app.whenReady().then(async () => {
     if (profile.runtimeMode === "native" || launcher.isRunning(profile.id)) {
       continue;
     }
+    const targetHome = getProfilePaths(
+      profileStore.profilesDir,
+      profile.id,
+    ).codexHome;
+    await syncProjectStateFromMaster({
+      baseCodexHome,
+      targetCodexHome: targetHome,
+    }).catch(() => undefined);
     if (profile.autoSync === "context" && !didContextHandoff) {
       didContextHandoff = true;
       await handoffContext(nativeProfile.id, profile.id).catch(() => undefined);
