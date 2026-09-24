@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
+  AutoSyncMode,
   CcSwitchImportResult,
   CcSwitchScanResult,
   ProfileInput,
@@ -12,6 +13,7 @@ const COLORS = ["#7CFFB2", "#A8C7FA", "#C4A7FF", "#FFB86B", "#FF8C9B"];
 
 const PROVIDER_META: Record<ProviderKind, { label: string; short: string }> = {
   chatgpt: { label: "ChatGPT 账号", short: "OA" },
+  deepseek: { label: "DeepSeek 官方 API", short: "DS" },
   "openrouter-deepseek": { label: "DeepSeek · OpenRouter", short: "DS" },
   custom: { label: "自定义 Responses", short: "API" },
 };
@@ -23,6 +25,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editor, setEditor] = useState<ProfileView | "new" | null>(null);
+  const [historyProfile, setHistoryProfile] = useState<ProfileView | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showCcSwitchImport, setShowCcSwitchImport] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -204,13 +207,13 @@ function App() {
           <span className="eyebrow">ONE CLICK · ZERO SIGN-OUT</span>
           <h2>点一下，就进入正确的 Codex。</h2>
           <p>
-            每个配置拥有独立登录态、会话数据和模型设置。窗口可以同时运行，不再退出、覆盖
-            <code> auth.json </code>或来回改配置。
+            “当前 Codex”保留你原来的登录与聊天；新增配置拥有独立登录态、会话数据和模型设置。
+            窗口可以同时运行，不再退出账号或来回改配置。
           </p>
         </div>
         <div className="hero-stat">
           <strong>{profiles.length.toString().padStart(2, "0")}</strong>
-          <span>个独立配置</span>
+          <span>个 Codex 入口</span>
         </div>
       </section>
 
@@ -250,14 +253,16 @@ function App() {
             {profiles.map((profile, index) => (
               <article
                 key={profile.id}
-                className={`profile-card ${profile.running ? "is-running" : ""}`}
+                className={`profile-card ${profile.running ? "is-running" : ""} ${profile.runtimeMode === "native" ? "is-native" : ""}`}
                 style={{ "--accent": profile.color } as React.CSSProperties}
                 onClick={() => void launch(profile)}
               >
                 <div className="card-stripe" />
                 <div className="card-head">
                   <div className="provider-avatar">
-                    {PROVIDER_META[profile.provider].short}
+                    {profile.runtimeMode === "native"
+                      ? "NOW"
+                      : PROVIDER_META[profile.provider].short}
                   </div>
                   <div className="card-controls" onClick={(event) => event.stopPropagation()}>
                     {profile.running && (
@@ -272,20 +277,30 @@ function App() {
                     )}
                     <button
                       className="card-icon-button"
+                      onClick={() => setHistoryProfile(profile)}
+                      title="历史工具"
+                      aria-label="历史工具"
+                    >
+                      <HistoryIcon />
+                    </button>
+                    <button
+                      className="card-icon-button"
                       onClick={() => setEditor(profile)}
                       title="编辑"
                       aria-label="编辑"
                     >
                       <EditIcon />
                     </button>
-                    <button
-                      className="card-icon-button danger"
-                      onClick={() => void remove(profile)}
-                      title="移除"
-                      aria-label="移除"
-                    >
-                      <TrashIcon />
-                    </button>
+                    {profile.runtimeMode !== "native" && (
+                      <button
+                        className="card-icon-button danger"
+                        onClick={() => void remove(profile)}
+                        title="移除"
+                        aria-label="移除"
+                      >
+                        <TrashIcon />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -296,7 +311,18 @@ function App() {
                   </div>
                   <h4>{profile.name}</h4>
                   <p>
-                    {PROVIDER_META[profile.provider].label}
+                    {profile.runtimeMode === "native"
+                      ? "现有 Codex · 原聊天与登录"
+                      : PROVIDER_META[profile.provider].label}
+                    <span
+                      className={
+                        profile.runtimeMode === "native"
+                          ? "history-badge native"
+                          : "history-badge"
+                      }
+                    >
+                      {profile.runtimeMode === "native" ? "原有历史" : "独立历史"}
+                    </span>
                     {profile.importedFrom?.kind === "cc-switch" && (
                       <span className="imported-badge">CC Switch</span>
                     )}
@@ -333,6 +359,19 @@ function App() {
           onClose={() => setEditor(null)}
           onSaved={async (message) => {
             setEditor(null);
+            setToast(message);
+            await refresh();
+          }}
+        />
+      )}
+
+      {historyProfile && (
+        <HistoryExchangeDialog
+          profile={historyProfile}
+          profiles={profiles}
+          onClose={() => setHistoryProfile(null)}
+          onFinished={async (message) => {
+            setHistoryProfile(null);
             setToast(message);
             await refresh();
           }}
@@ -377,8 +416,12 @@ function ProfileEditor({
   const [baseUrl, setBaseUrl] = useState(profile?.baseUrl ?? "https://api.example.com/v1");
   const [apiKey, setApiKey] = useState("");
   const [importCurrentSession, setImportCurrentSession] = useState(false);
+  const [autoSync, setAutoSync] = useState<AutoSyncMode>(
+    profile?.autoSync ?? "off",
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isNative = profile?.runtimeMode === "native";
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -407,13 +450,16 @@ function ProfileEditor({
         provider,
         model: provider === "chatgpt" ? undefined : model,
         baseUrl:
-          provider === "openrouter-deepseek"
-            ? "https://openrouter.ai/api/v1"
+          provider === "deepseek"
+            ? "https://api.deepseek.com"
+            : provider === "openrouter-deepseek"
+              ? "https://openrouter.ai/api/v1"
             : provider === "custom"
               ? baseUrl
               : undefined,
         apiKey: apiKey || undefined,
         importCurrentSession: !profile && provider === "chatgpt" && importCurrentSession,
+        autoSync: isNative ? "off" : autoSync,
       };
       await window.codexDeck.saveProfile(input);
       await onSaved(profile ? `已更新「${name.trim()}」` : `已创建「${name.trim()}」`);
@@ -433,8 +479,10 @@ function ProfileEditor({
       >
         <div className="modal-head">
           <div>
-            <span className="eyebrow">{profile ? "EDIT PROFILE" : "NEW PROFILE"}</span>
-            <h3>{profile ? "编辑配置" : "添加独立 Codex"}</h3>
+            <span className="eyebrow">
+              {isNative ? "CURRENT CODEX" : profile ? "EDIT PROFILE" : "NEW PROFILE"}
+            </span>
+            <h3>{isNative ? "编辑当前入口" : profile ? "编辑配置" : "添加独立 Codex"}</h3>
           </div>
           <button type="button" className="close-button" onClick={onClose} aria-label="关闭">
             ×
@@ -452,33 +500,43 @@ function ProfileEditor({
           />
         </label>
 
-        <fieldset className="provider-picker">
-          <legend>连接方式</legend>
-          {(Object.keys(PROVIDER_META) as ProviderKind[]).map((kind) => (
-            <button
-              type="button"
-              key={kind}
-              className={provider === kind ? "selected" : ""}
-              onClick={() => {
-                setProvider(kind);
-                if (kind === "openrouter-deepseek") {
-                  setModel("deepseek/deepseek-v4.1-flash");
-                }
-              }}
-            >
-              <strong>{PROVIDER_META[kind].label}</strong>
-              <span>
-                {kind === "chatgpt"
-                  ? "启动后在独立窗口登录"
-                  : kind === "openrouter-deepseek"
-                    ? "Responses API，适配 Codex"
-                    : "兼容 Responses 的接口"}
-              </span>
-            </button>
-          ))}
-        </fieldset>
+        {isNative ? (
+          <p className="native-edit-note">
+            此入口直接打开你原来的 Codex 数据目录，因此能看到原聊天和原登录。为避免破坏现有数据，只能修改名称和识别色，不能删除或改成其他连接方式。
+          </p>
+        ) : (
+          <fieldset className="provider-picker">
+            <legend>连接方式</legend>
+            {(Object.keys(PROVIDER_META) as ProviderKind[]).map((kind) => (
+              <button
+                type="button"
+                key={kind}
+                className={provider === kind ? "selected" : ""}
+                onClick={() => {
+                  setProvider(kind);
+                  if (kind === "openrouter-deepseek") {
+                    setModel("deepseek/deepseek-v4.1-flash");
+                  } else if (kind === "deepseek") {
+                    setModel("deepseek-flash");
+                  }
+                }}
+              >
+                <strong>{PROVIDER_META[kind].label}</strong>
+                <span>
+                  {kind === "chatgpt"
+                    ? "启动后在独立窗口登录"
+                    : kind === "deepseek"
+                      ? "官方 Responses API，直接连接"
+                      : kind === "openrouter-deepseek"
+                      ? "Responses API，适配 Codex"
+                      : "兼容 Responses 的接口"}
+                </span>
+              </button>
+            ))}
+          </fieldset>
+        )}
 
-        {provider !== "chatgpt" && (
+        {!isNative && provider !== "chatgpt" && (
           <div className="api-fields">
             {provider === "custom" && (
               <label className="field">
@@ -510,11 +568,34 @@ function ProfileEditor({
             </label>
             {provider === "openrouter-deepseek" && (
               <p className="field-note">
-                DeepSeek 官方接口目前是 Chat Completions；Codex 只接受 Responses，因此此预设经
-                OpenRouter 连接 DeepSeek。
+                兼容旧配置：通过 OpenRouter 的 Responses API 连接 DeepSeek。
               </p>
             )}
+            {provider === "deepseek" && (
+              <p className="field-note">
+                直接使用 DeepSeek 官方 Responses API；默认模型为 deepseek-flash。
+              </p>
+            )}
+            <p className="field-note">
+              Codex 桌面壳可复用当前本机登录，但模型请求只使用这里保存的 provider API Key；Key 仍只加密保存在本机。
+            </p>
           </div>
+        )}
+
+        {!isNative && (
+          <label className="field">
+            <span>打开 Codex Deck 时</span>
+            <select
+              value={autoSync}
+              onChange={(event) =>
+                setAutoSync(event.target.value as AutoSyncMode)
+              }
+            >
+              <option value="off">不自动操作</option>
+              <option value="context">复制当前 Codex 最新上下文并打开这个配置</option>
+              <option value="history">从主库增量同步这个 provider 的历史</option>
+            </select>
+          </label>
         )}
 
         {profile?.configurationSource === "cc-switch" && (
@@ -564,6 +645,209 @@ function ProfileEditor({
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function HistoryExchangeDialog({
+  profile,
+  profiles,
+  onClose,
+  onFinished,
+}: {
+  profile: ProfileView;
+  profiles: ProfileView[];
+  onClose: () => void;
+  onFinished: (message: string) => Promise<void>;
+}) {
+  const targets = profiles.filter(
+    (candidate) =>
+      candidate.id !== profile.id && candidate.runtimeMode !== "native",
+  );
+  const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isNative = profile.runtimeMode === "native";
+
+  async function run(
+    action:
+      | "migrate"
+      | "sync"
+      | "export"
+      | "transfer"
+      | "handoff"
+      | "refresh-auth",
+  ) {
+    setBusy(true);
+    setError(null);
+    try {
+      if (action === "migrate") {
+        const result = await window.codexDeck.migrateProfileHistory(profile.id);
+        const skipped = result.missingSessions
+          ? `，${result.missingSessions} 个文件缺失已跳过`
+          : "";
+        await onFinished(
+          `已迁移 ${result.copiedSessions} 个会话到「${profile.name}」${skipped}`,
+        );
+        return;
+      }
+      if (action === "sync") {
+        const result = await window.codexDeck.syncProfileHistory(profile.id);
+        const skipped = result.missingSessions
+          ? `，${result.missingSessions} 个文件缺失已跳过`
+          : "";
+        await onFinished(
+          `已从主库增量同步 ${result.copiedSessions} 个会话到「${profile.name}」${skipped}`,
+        );
+        return;
+      }
+      if (action === "refresh-auth") {
+        const result = await window.codexDeck.refreshCcSwitchAuth(profile.id);
+        await onFinished(
+          `已从 CC Switch 重新注入「${result.name}」的登录态`,
+        );
+        return;
+      }
+      if (action === "export") {
+        const result = await window.codexDeck.exportProfileHistory(profile.id);
+        await onFinished(`已导出 ${result.copiedSessions} 个会话到 ${result.directory}`);
+        return;
+      }
+      if (!targetId) throw new Error("请选择目标配置。");
+      if (action === "transfer") {
+        const result = await window.codexDeck.transferProfileHistory(
+          profile.id,
+          targetId,
+        );
+        const targetName = profiles.find((item) => item.id === targetId)?.name;
+        const skipped = result.missingSessions
+          ? `，${result.missingSessions} 个文件缺失已跳过`
+          : "";
+        await onFinished(
+          `已转移 ${result.copiedSessions} 个会话到「${targetName ?? "目标配置"}」${skipped}`,
+        );
+        return;
+      }
+      const result = await window.codexDeck.handoffProfileContext(
+        profile.id,
+        targetId,
+      );
+      const targetName = profiles.find((item) => item.id === targetId)?.name;
+      await onFinished(
+        `已复制「${profile.name}」的最新上下文并切到「${targetName ?? "目标配置"}」，在目标窗口按 Cmd+V 粘贴`,
+      );
+      void result;
+    } catch (runError) {
+      setError(cleanError(runError));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section
+        className="modal history-dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="modal-head">
+          <div>
+            <span className="eyebrow">HISTORY TOOLS</span>
+            <h3>历史工具 · {profile.name}</h3>
+          </div>
+          <button type="button" className="close-button" onClick={onClose} aria-label="关闭">
+            ×
+          </button>
+        </div>
+
+        <p className="import-intro">
+          所有操作都只复制数据，不修改来源目录。跨 provider 转移只保证可查看，不一定能续写旧会话。
+        </p>
+
+        <div className="history-actions">
+          {!isNative && (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busy}
+              onClick={() => void run("migrate")}
+            >
+              从当前 Codex 迁移旧历史
+            </button>
+          )}
+          {!isNative && (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busy}
+              onClick={() => void run("sync")}
+            >
+              从主库增量同步
+            </button>
+          )}
+          {profile.importedFrom?.kind === "cc-switch" && (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busy}
+              onClick={() => void run("refresh-auth")}
+            >
+              从 CC Switch 重新注入登录态
+            </button>
+          )}
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={busy}
+            onClick={() => void run("export")}
+          >
+            导出可读副本
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={busy || targets.length === 0 || !targetId}
+            onClick={() => void run("handoff")}
+          >
+            复制上下文并切到目标
+          </button>
+        </div>
+
+        <label className="field">
+          <span>转移到另一个 provider</span>
+          <select
+            value={targetId}
+            onChange={(event) => setTargetId(event.target.value)}
+            disabled={busy || targets.length === 0}
+          >
+            {targets.length === 0 ? (
+              <option value="">没有可用的目标配置</option>
+            ) : (
+              targets.map((target) => (
+                <option key={target.id} value={target.id}>
+                  {target.name}
+                </option>
+              ))
+            )}
+          </select>
+        </label>
+
+        {error && <div className="form-error">{error}</div>}
+
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
+            取消
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={busy || targets.length === 0 || !targetId}
+            onClick={() => void run("transfer")}
+          >
+            {busy ? "处理中…" : "转移历史"}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -717,6 +1001,16 @@ function TrashIcon() {
 
 function StopIcon() {
   return <svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1" /></svg>;
+}
+
+function HistoryIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M4 12a8 8 0 1 1 2.34 5.66" />
+      <path d="M4 12V6m0 6h6" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  );
 }
 
 export default App;

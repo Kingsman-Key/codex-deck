@@ -4,6 +4,7 @@ import { mkdir, rm, writeFile, chmod } from "node:fs/promises";
 import path from "node:path";
 import type {
   CcSwitchCandidate,
+  CcSwitchAuthRefreshResult,
   CcSwitchImportResult,
   CcSwitchScanResult,
   CredentialKind,
@@ -174,6 +175,59 @@ export async function importCcSwitchProviders(options: {
   return { imported, skipped };
 }
 
+export async function refreshCcSwitchAuth(options: {
+  profile: Profile;
+  profileStore: ProfileStore;
+  baseCodexHome: string;
+  databasePath?: string | null;
+}): Promise<CcSwitchAuthRefreshResult> {
+  if (options.profile.importedFrom?.kind !== "cc-switch") {
+    throw new Error("这个配置不是从 CC Switch 导入的。");
+  }
+  const databasePath =
+    options.databasePath ?? (await findCcSwitchDatabase());
+  if (!databasePath) throw new Error("没有找到 CC Switch 数据库。");
+  const record = readCcSwitchRecords(databasePath).find(
+    (item) => item.sourceId === options.profile.importedFrom?.providerId,
+  );
+  if (!record) {
+    throw new Error("CC Switch 中已经找不到这个来源配置。");
+  }
+  if (record.credentialKind === "unknown") {
+    throw new Error("这个 CC Switch 配置没有可用的登录态或 API Key。");
+  }
+
+  const paths = getProfilePaths(
+    options.profileStore.profilesDir,
+    options.profile.id,
+  );
+  await writeImportedArtifacts(paths, record);
+  if (record.credentialKind === "api-key") {
+    const apiKey = stringValue(record.auth.OPENAI_API_KEY);
+    if (!apiKey) throw new Error("这个 CC Switch 配置缺少 API Key。");
+    await options.profileStore.save({
+      id: options.profile.id,
+      name: options.profile.name,
+      color: options.profile.color,
+      provider: options.profile.provider,
+      baseUrl: options.profile.baseUrl,
+      model: options.profile.model,
+      apiKey,
+      autoSync: options.profile.autoSync,
+    });
+  }
+  await prepareProfileRuntime(
+    options.profileStore.profilesDir,
+    options.baseCodexHome,
+    options.profile,
+  );
+  return {
+    sourceId: record.sourceId,
+    name: record.name,
+    credentialKind: record.credentialKind,
+  };
+}
+
 export function readCcSwitchRecords(databasePath: string): CcSwitchProviderRecord[] {
   const database = new DatabaseSync(databasePath, { readOnly: true });
   try {
@@ -203,12 +257,8 @@ export function sanitizeImportedConfig(options: {
   config: string;
   credentialKind: CredentialKind;
   modelProvider?: string;
-  modelCatalogPath?: string;
 }): string {
   const output: string[] = ['cli_auth_credentials_store = "file"'];
-  if (options.modelCatalogPath) {
-    output.push(`model_catalog_json = ${JSON.stringify(options.modelCatalogPath)}`);
-  }
   output.push("");
 
   const targetProviderSection = options.modelProvider
@@ -256,12 +306,12 @@ export function sanitizeImportedConfig(options: {
       normalizedKey === "OPENAI_API_KEY" ||
       normalizedKey === "CODEX_API_KEY" ||
       normalizedKey === "CODEX_ACCESS_TOKEN" ||
+      normalizedKey === "MODEL_CATALOG_JSON" ||
+      normalizedKey === "PREFERRED_AUTH_METHOD" ||
+      normalizedKey === "FORCED_LOGIN_METHOD" ||
       /(?:^|_)(?:API_KEY|ACCESS_TOKEN|REFRESH_TOKEN|BEARER_TOKEN|SECRET|PASSWORD)$/.test(
         normalizedKey,
       ) ||
-      (!currentSection &&
-        options.modelCatalogPath &&
-        normalizedKey === "MODEL_CATALOG_JSON") ||
       (insideTargetProvider &&
         options.credentialKind === "api-key" &&
         ["ENV_KEY", "REQUIRES_OPENAI_AUTH", "EXPERIMENTAL_BEARER_TOKEN"].includes(
@@ -365,6 +415,9 @@ function toCandidate(
 }
 
 function inferProviderKind(record: CcSwitchProviderRecord): ProviderKind {
+  if (record.baseUrl?.includes("api.deepseek.com")) {
+    return "deepseek";
+  }
   if (
     record.baseUrl?.includes("openrouter.ai") &&
     record.model?.toLowerCase().includes("deepseek")
@@ -387,7 +440,6 @@ async function writeImportedArtifacts(
     config: record.config,
     credentialKind: record.credentialKind as CredentialKind,
     modelProvider: record.modelProvider,
-    modelCatalogPath,
   });
   const importedConfigPath = path.join(paths.root, "imported-config.toml");
   await writeFile(importedConfigPath, config, { mode: 0o600 });

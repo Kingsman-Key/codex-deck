@@ -14,12 +14,15 @@
 
 ## 隔离与安全
 
-- 不通过替换全局 `~/.codex/auth.json` 实现切号；每个实例必须保持独立 `CODEX_HOME` 和 `--user-data-dir`。
+- 不通过替换全局 `~/.codex/auth.json` 实现切号；受保护的“当前 Codex”入口可原地使用现有 `~/.codex`，其他实例必须保持独立 `CODEX_HOME` 和 `--user-data-dir`。
+- 隔离实例不得共享、软链接或整库复制正在写入的会话 SQLite/历史目录；需要旧历史时使用“当前 Codex”入口。
+- API/provider 实例缺少 `auth.json` 时可从当前 Codex 单次复制文件型认证，供桌面壳通过登录门槛；不得覆盖目标已有认证，不得把凭据值暴露到日志或 IPC，模型请求仍必须由隔离 provider 配置和系统安全存储中的 API Key 路由。
 - API Key 不得写入 profile 元数据、TOML、日志、测试快照或 Git；使用系统安全存储加密，进程启动时才注入环境变量。
 - 启动目标进程前清除继承的 Codex/OpenAI 认证环境变量，避免配置串号。
 - 删除 profile 数据优先移入系统废纸篓；运行中的 profile 不允许删除。
 - 自定义远程 provider 仅允许 HTTPS；本地回环地址可用 HTTP。
 - CC Switch 数据库只允许只读扫描，禁止修改来源数据；导入时 API Key 进入系统安全存储，OAuth 凭据只写入目标 profile 的隔离 `auth.json`，任何日志和 IPC 预览都不得泄露凭据值。
+- CC Switch 的模型目录只作为来源副本留存；未经当前 Codex schema 校验，不得写入运行时 `model_catalog_json`。
 - 不复制无明确开源许可证的第三方项目代码。借鉴架构时在 README 记录来源与取舍。
 
 ## 材料、结果与验证

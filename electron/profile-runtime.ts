@@ -34,18 +34,36 @@ export async function prepareProfileRuntime(
   baseCodexHome: string,
   profile: Profile,
 ): Promise<ProfilePaths> {
+  if (profile.runtimeMode === "native") {
+    return {
+      root: baseCodexHome,
+      codexHome: baseCodexHome,
+      browserData: "",
+    };
+  }
+
   const paths = getProfilePaths(profilesDir, profile.id);
   await mkdir(paths.codexHome, { recursive: true, mode: 0o700 });
   await mkdir(paths.browserData, { recursive: true, mode: 0o700 });
   const configPath = path.join(paths.codexHome, "config.toml");
   const importedConfigPath = path.join(paths.root, "imported-config.toml");
-  const config =
+  const rawConfig =
     profile.configurationSource === "cc-switch" &&
     (await exists(importedConfigPath))
       ? await readFile(importedConfigPath, "utf8")
       : generateProfileConfig(profile);
+  const usesApiKey =
+    profile.credentialKind === "api-key" ||
+    (profile.provider !== "chatgpt" && !profile.credentialKind);
+  const config = normalizeRuntimeConfig(
+    rawConfig,
+    profile.provider === "deepseek" ? profile.model : undefined,
+  );
   await writeFile(configPath, config, { mode: 0o600 });
   await chmod(configPath, 0o600);
+  if (usesApiKey) {
+    await importCurrentAuthIfMissing(baseCodexHome, paths.codexHome);
+  }
 
   for (const sharedName of ["skills", "plugins"]) {
     const source = path.join(baseCodexHome, sharedName);
@@ -55,6 +73,48 @@ export async function prepareProfileRuntime(
   }
 
   return paths;
+}
+
+export function normalizeRuntimeConfig(
+  config: string,
+  modelOverride?: string,
+): string {
+  let insideSection = false;
+  const lines = config.split(/\r?\n/).flatMap((line) => {
+    if (/^\s*\[[^\]]+\]\s*(?:#.*)?$/.test(line)) insideSection = true;
+    if (
+      /^\s*["']?(?:model_catalog_json|preferred_auth_method|forced_login_method)["']?\s*=/i.test(
+        line,
+      )
+    ) {
+      return [];
+    }
+    if (
+      modelOverride &&
+      !insideSection &&
+      /^\s*["']?model["']?\s*=/i.test(line)
+    ) {
+      return [`model = ${JSON.stringify(modelOverride)}`];
+    }
+    return [line];
+  });
+  return `${lines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()}\n`;
+}
+
+export async function importCurrentAuthIfMissing(
+  baseCodexHome: string,
+  destinationCodexHome: string,
+): Promise<boolean> {
+  const destination = path.join(destinationCodexHome, "auth.json");
+  if (await exists(destination)) return false;
+  const source = path.join(baseCodexHome, "auth.json");
+  if (!(await exists(source))) return false;
+  await copyFile(source, destination, constants.COPYFILE_EXCL);
+  await chmod(destination, 0o600);
+  return true;
 }
 
 export async function importCurrentAuth(

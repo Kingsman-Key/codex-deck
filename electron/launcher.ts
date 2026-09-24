@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { LaunchResult, Profile } from "../src/shared/types";
+import { getProfilePaths } from "./profile-runtime";
 import type { ProfilePaths } from "./profile-runtime";
 
 const execFileAsync = promisify(execFile);
@@ -17,8 +18,12 @@ export function buildLaunchSpec(
   executable: string,
   paths: ProfilePaths,
   apiKey: string | null,
+  runtimeMode: Profile["runtimeMode"] = "isolated",
 ): LaunchSpec {
   const env = sanitizeEnvironment(process.env);
+  if (runtimeMode === "native") {
+    return { executable, args: [], env };
+  }
   env.CODEX_HOME = paths.codexHome;
   env.CODEX_SQLITE_HOME = paths.codexHome;
   if (apiKey) env.CODEX_DECK_API_KEY = apiKey;
@@ -109,7 +114,35 @@ export class ProfileLauncher {
       return { status: "focused", pid: existingPid };
     }
 
-    const spec = buildLaunchSpec(executable, paths, apiKey);
+    if (profile.runtimeMode === "native") {
+      const nativePid = await findDesktopProcessPid(executable);
+      if (nativePid) {
+        this.processes.set(profile.id, nativePid);
+        await focusProcess(nativePid);
+        this.onChanged();
+        return { status: "focused", pid: nativePid };
+      }
+    }
+
+    if (profile.runtimeMode !== "native" && paths.browserData) {
+      const isolatedPid = await findIsolatedDesktopProcessPid(
+        executable,
+        paths.browserData,
+      );
+      if (isolatedPid) {
+        this.processes.set(profile.id, isolatedPid);
+        await focusProcess(isolatedPid);
+        this.onChanged();
+        return { status: "focused", pid: isolatedPid };
+      }
+    }
+
+    const spec = buildLaunchSpec(
+      executable,
+      paths,
+      apiKey,
+      profile.runtimeMode ?? "isolated",
+    );
     const child = spawn(spec.executable, spec.args, {
       cwd: homedir(),
       env: spec.env,
@@ -130,6 +163,34 @@ export class ProfileLauncher {
     return { status: "launched", pid: child.pid };
   }
 
+  async recoverProcesses(
+    profiles: Profile[],
+    executable: string,
+    profilesDir: string,
+  ): Promise<void> {
+    if (process.platform !== "darwin") return;
+
+    let processList: string;
+    try {
+      processList = await readDesktopProcessList();
+    } catch {
+      return;
+    }
+
+    for (const profile of profiles) {
+      const pid =
+        profile.runtimeMode === "native"
+          ? parseNativeDesktopPid(processList, executable)
+          : parseIsolatedDesktopPid(
+              processList,
+              executable,
+              getProfilePaths(profilesDir, profile.id).browserData,
+            );
+      if (pid) this.processes.set(profile.id, pid);
+    }
+    this.onChanged();
+  }
+
   async quit(id: string): Promise<void> {
     const pid = this.processes.get(id);
     if (!pid || !isPidAlive(pid)) {
@@ -144,6 +205,79 @@ export class ProfileLauncher {
     this.processes.delete(id);
     this.onChanged();
   }
+}
+
+async function findDesktopProcessPid(executable: string): Promise<number | null> {
+  if (process.platform !== "darwin") return null;
+  try {
+    return parseNativeDesktopPid(await readDesktopProcessList(), executable);
+  } catch {
+    return null;
+  }
+}
+
+async function findIsolatedDesktopProcessPid(
+  executable: string,
+  browserData: string,
+): Promise<number | null> {
+  if (process.platform !== "darwin") return null;
+  try {
+    return parseIsolatedDesktopPid(
+      await readDesktopProcessList(),
+      executable,
+      browserData,
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function readDesktopProcessList(): Promise<string> {
+  const { stdout } = await execFileAsync("ps", [
+    "-axo",
+    "pid=,command=",
+    "-ww",
+  ]);
+  return stdout;
+}
+
+export function parseNativeDesktopPid(
+  processList: string,
+  executable: string,
+): number | null {
+  for (const line of processList.split(/\r?\n/)) {
+    const match = line.match(/^\s*(\d+)\s+(.+)$/);
+    if (!match) continue;
+    const command = match[2];
+    const isTarget =
+      command === executable ||
+      (command.startsWith(`${executable} `) &&
+        !command.includes("--user-data-dir="));
+    if (!isTarget) continue;
+    const pid = Number(match[1]);
+    if (Number.isInteger(pid) && pid > 0) return pid;
+  }
+  return null;
+}
+
+export function parseIsolatedDesktopPid(
+  processList: string,
+  executable: string,
+  browserData: string,
+): number | null {
+  const marker = `--user-data-dir=${browserData}`;
+  for (const line of processList.split(/\r?\n/)) {
+    const match = line.match(/^\s*(\d+)\s+(.+)$/);
+    if (!match) continue;
+    const command = match[2];
+    const args = command.startsWith(`${executable} `)
+      ? command.slice(executable.length).trim().split(/\s+/)
+      : [];
+    if (!args.includes(marker)) continue;
+    const pid = Number(match[1]);
+    if (Number.isInteger(pid) && pid > 0) return pid;
+  }
+  return null;
 }
 
 function isPidAlive(pid: number): boolean {

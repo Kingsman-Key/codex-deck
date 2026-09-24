@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   safeStorage,
@@ -9,15 +10,32 @@ import {
 import { homedir } from "node:os";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ProfileInput, ProfileView } from "../src/shared/types";
+import type {
+  ContextHandoffResult,
+  ProfileInput,
+  ProfileView,
+} from "../src/shared/types";
 import { ProfileStore } from "./profile-store";
 import { findDesktopExecutable, ProfileLauncher } from "./launcher";
-import { importCcSwitchProviders, scanCcSwitch } from "./cc-switch-importer";
+import {
+  importCcSwitchProviders,
+  refreshCcSwitchAuth,
+  scanCcSwitch,
+} from "./cc-switch-importer";
 import {
   exists,
+  getProfilePaths,
   importCurrentAuth,
   prepareProfileRuntime,
 } from "./profile-runtime";
+import {
+  buildLatestContext,
+  exportProfileHistory,
+  migrateProfileHistory,
+  resolveProviderTag,
+  syncProfileHistoryFromMaster,
+  transferProfileHistory,
+} from "./history-migration";
 
 let mainWindow: BrowserWindow | null = null;
 let profileStore: ProfileStore;
@@ -82,6 +100,64 @@ async function resolveExecutable(): Promise<string | null> {
   return findDesktopExecutable((await getSettings()).desktopExecutable);
 }
 
+async function handoffContext(
+  sourceId: string,
+  targetId: string,
+): Promise<ContextHandoffResult> {
+  if (sourceId === targetId) {
+    throw new Error("请选择两个不同的配置。");
+  }
+  const sourceProfile = await profileStore.get(sourceId);
+  const targetProfile = await profileStore.get(targetId);
+  if (targetProfile.runtimeMode === "native") {
+    throw new Error("“当前 Codex”不能作为上下文接收目标。");
+  }
+
+  const executable = await resolveExecutable();
+  if (!executable) {
+    throw new Error("没有找到 Codex / ChatGPT 桌面应用。");
+  }
+  const sourceHome =
+    sourceProfile.runtimeMode === "native"
+      ? baseCodexHome
+      : getProfilePaths(profileStore.profilesDir, sourceProfile.id).codexHome;
+  const sourceTag = await resolveProviderTag(
+    path.join(sourceHome, "config.toml"),
+    sourceProfile,
+  );
+  const context = await buildLatestContext({
+    sourceCodexHome: sourceHome,
+    providerTag: sourceTag,
+  });
+  clipboard.writeText(context);
+
+  const paths = await prepareProfileRuntime(
+    profileStore.profilesDir,
+    baseCodexHome,
+    targetProfile,
+  );
+  const apiKey = await profileStore.getSecret(targetId);
+  const credentialKind =
+    targetProfile.credentialKind ??
+    (targetProfile.provider === "chatgpt" ? "oauth" : "api-key");
+  if (credentialKind === "api-key" && !apiKey) {
+    throw new Error("目标 API 配置还没有保存 API Key。");
+  }
+  const targetResult = await launcher.launch(
+    targetProfile,
+    executable,
+    paths,
+    apiKey,
+  );
+
+  return {
+    sourceName: sourceProfile.name,
+    targetName: targetProfile.name,
+    targetStatus: targetResult.status,
+    contextLength: context.length,
+  };
+}
+
 async function listProfileViews(): Promise<ProfileView[]> {
   const profiles = await profileStore.list();
   return Promise.all(
@@ -120,7 +196,10 @@ function registerIpc(): void {
     if (launcher.isRunning(id)) {
       throw new Error("这个配置仍在运行，请先退出对应窗口。");
     }
-    await profileStore.get(id);
+    const profile = await profileStore.get(id);
+    if (profile.runtimeMode === "native") {
+      throw new Error("“当前 Codex”是保留原聊天与登录的系统入口，不能删除。");
+    }
     const directory = profileStore.profileDirectory(id);
     if (await exists(directory)) await shell.trashItem(directory);
     await profileStore.remove(id);
@@ -151,6 +230,84 @@ function registerIpc(): void {
   ipcMain.handle("profiles:quit", async (_event, id: string) => {
     await launcher.quit(id);
   });
+
+  ipcMain.handle("profiles:migrate-history", async (_event, id: string) => {
+    if (launcher.isRunning(id)) {
+      throw new Error("这个配置仍在运行，请先退出对应窗口再迁移历史。");
+    }
+    const profile = await profileStore.get(id);
+    return migrateProfileHistory({
+      profile,
+      profilesDir: profileStore.profilesDir,
+      baseCodexHome,
+    });
+  });
+
+  ipcMain.handle("profiles:sync-history", async (_event, id: string) => {
+    if (launcher.isRunning(id)) {
+      throw new Error("这个配置仍在运行，请先退出对应窗口再同步历史。");
+    }
+    const profile = await profileStore.get(id);
+    return syncProfileHistoryFromMaster({
+      profile,
+      profilesDir: profileStore.profilesDir,
+      baseCodexHome,
+    });
+  });
+
+  ipcMain.handle(
+    "profiles:transfer-history",
+    async (_event, sourceId: string, targetId: string) => {
+      if (sourceId === targetId) {
+        throw new Error("请选择两个不同的配置。");
+      }
+      if (
+        launcher.isRunning(sourceId) ||
+        launcher.isRunning(targetId)
+      ) {
+        throw new Error("来源或目标配置仍在运行，请先退出对应窗口。");
+      }
+      const sourceProfile = await profileStore.get(sourceId);
+      const targetProfile = await profileStore.get(targetId);
+      return transferProfileHistory({
+        sourceProfile,
+        targetProfile,
+        profilesDir: profileStore.profilesDir,
+        baseCodexHome,
+      });
+    },
+  );
+
+  ipcMain.handle("profiles:export-history", async (_event, id: string) => {
+    if (launcher.isRunning(id)) {
+      throw new Error("这个配置仍在运行，请先退出对应窗口再导出历史。");
+    }
+    const profile = await profileStore.get(id);
+    return exportProfileHistory({
+      profile,
+      profilesDir: profileStore.profilesDir,
+      baseCodexHome,
+    });
+  });
+
+  ipcMain.handle("profiles:refresh-cc-switch-auth", async (_event, id: string) => {
+    if (launcher.isRunning(id)) {
+      throw new Error("这个配置仍在运行，请先退出对应窗口再重新注入登录态。");
+    }
+    const profile = await profileStore.get(id);
+    return refreshCcSwitchAuth({
+      profile,
+      profileStore,
+      baseCodexHome,
+    });
+  });
+
+  ipcMain.handle(
+    "profiles:handoff-context",
+    async (_event, sourceId: string, targetId: string) => {
+      return handoffContext(sourceId, targetId);
+    },
+  );
 
   ipcMain.handle("system:status", async () => ({
     platform: process.platform,
@@ -218,7 +375,36 @@ app.whenReady().then(async () => {
     decrypt: (value) => safeStorage.decryptString(value),
   });
   await profileStore.initialize();
+  const nativeProfile = await profileStore.ensureNativeProfile();
+  await profileStore.enableAutoSyncForImportedProfiles();
+  await profileStore.normalizeDeepSeekProfiles();
   launcher = new ProfileLauncher(emitProfilesChanged);
+  const desktopExecutable = await resolveExecutable();
+  const profiles = await profileStore.list();
+  if (desktopExecutable) {
+    await launcher.recoverProcesses(
+      profiles,
+      desktopExecutable,
+      profileStore.profilesDir,
+    );
+  }
+  let didContextHandoff = false;
+  for (const profile of profiles) {
+    if (profile.runtimeMode === "native" || launcher.isRunning(profile.id)) {
+      continue;
+    }
+    if (profile.autoSync === "context" && !didContextHandoff) {
+      didContextHandoff = true;
+      await handoffContext(nativeProfile.id, profile.id).catch(() => undefined);
+    }
+    if (profile.autoSync === "history") {
+      await syncProfileHistoryFromMaster({
+        profile,
+        profilesDir: profileStore.profilesDir,
+        baseCodexHome,
+      }).catch(() => undefined);
+    }
+  }
   registerIpc();
   createWindow();
 

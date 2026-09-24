@@ -15,9 +15,11 @@ export function generateProfileConfig(profile: Profile): string {
   }
 
   const providerName =
-    profile.provider === "openrouter-deepseek"
-      ? "OpenRouter · DeepSeek"
-      : "Custom Responses provider";
+    profile.provider === "deepseek"
+      ? "DeepSeek API"
+      : profile.provider === "openrouter-deepseek"
+        ? "OpenRouter · DeepSeek"
+        : "Custom Responses provider";
 
   return `${header.join("\n")}
 model = ${tomlString(profile.model ?? "")}

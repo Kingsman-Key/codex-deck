@@ -2,6 +2,7 @@ import type { ProfileInput, ProviderKind } from "../src/shared/types";
 
 const PROVIDERS = new Set<ProviderKind>([
   "chatgpt",
+  "deepseek",
   "openrouter-deepseek",
   "custom",
 ]);
@@ -36,7 +37,16 @@ export function validateProfileInput(input: ProfileInput): ValidProfileInput {
     model: input.model?.trim(),
   };
 
-  if (input.provider === "openrouter-deepseek") {
+  if (input.provider === "deepseek") {
+    normalized.baseUrl = "https://api.deepseek.com";
+    normalized.model ||= "deepseek-flash";
+    if (
+      normalized.model === "deepseek-v4-flash" ||
+      normalized.model === "deepseek-v4-flash-vision-exp"
+    ) {
+      normalized.model = "deepseek-flash";
+    }
+  } else if (input.provider === "openrouter-deepseek") {
     normalized.baseUrl = "https://openrouter.ai/api/v1";
     normalized.model ||= "deepseek/deepseek-v4.1-flash";
   }

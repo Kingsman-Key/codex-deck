@@ -21,12 +21,12 @@ describe("generateProfileConfig", () => {
   it("creates a Responses provider without embedding its secret", () => {
     const config = generateProfileConfig({
       ...baseProfile,
-      provider: "openrouter-deepseek",
-      model: "deepseek/deepseek-v4.1-flash",
-      baseUrl: "https://openrouter.ai/api/v1",
+      provider: "deepseek",
+      model: "deepseek-flash",
+      baseUrl: "https://api.deepseek.com",
     });
-    expect(config).toContain('model = "deepseek/deepseek-v4.1-flash"');
-    expect(config).toContain('base_url = "https://openrouter.ai/api/v1"');
+    expect(config).toContain('model = "deepseek-flash"');
+    expect(config).toContain('base_url = "https://api.deepseek.com"');
     expect(config).toContain('env_key = "CODEX_DECK_API_KEY"');
     expect(config).toContain('wire_api = "responses"');
   });

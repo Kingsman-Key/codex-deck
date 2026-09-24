@@ -1,12 +1,14 @@
 import { DatabaseSync } from "node:sqlite";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  refreshCcSwitchAuth,
   sanitizeImportedConfig,
   scanCcSwitch,
 } from "../electron/cc-switch-importer";
+import { ProfileStore } from "../electron/profile-store";
 import type { Profile } from "../src/shared/types";
 
 async function createCcSwitchFixture(): Promise<string> {
@@ -105,7 +107,6 @@ describe("CC Switch importer", () => {
     const config = sanitizeImportedConfig({
       credentialKind: "api-key",
       modelProvider: "custom",
-      modelCatalogPath: "/isolated/model-catalog.json",
       config: [
         'model_provider = "custom"',
         'model_catalog_json = "/old/catalog.json"',
@@ -120,13 +121,49 @@ describe("CC Switch importer", () => {
     });
 
     expect(config).toContain('cli_auth_credentials_store = "file"');
-    expect(config).toContain(
-      'model_catalog_json = "/isolated/model-catalog.json"',
-    );
+    expect(config).not.toContain("model_catalog_json");
     expect(config).toContain('env_key = "CODEX_DECK_API_KEY"');
     expect(config).not.toContain("plain-secret");
     expect(config).not.toContain("plain-key");
     expect(config).not.toContain("/global/.codex");
     expect(config).not.toContain("requires_openai_auth");
+  });
+
+  it("re-injects an imported OAuth login state into the isolated profile", async () => {
+    const databasePath = await createCcSwitchFixture();
+    const root = await mkdtemp(path.join(tmpdir(), "cc-switch-auth-test-"));
+    const encryption = {
+      isAvailable: () => true,
+      encrypt: (value: string) => Buffer.from(`sealed:${value}`),
+      decrypt: (value: Buffer) => value.toString().replace(/^sealed:/, ""),
+    };
+    const store = new ProfileStore(root, encryption);
+    await store.initialize();
+    const profile = await store.saveImported({
+      sourceProviderId: "oauth-one",
+      name: "Imported OAuth",
+      color: "#7CFFB2",
+      provider: "chatgpt",
+      credentialKind: "oauth",
+    });
+
+    const result = await refreshCcSwitchAuth({
+      profile,
+      profileStore: store,
+      baseCodexHome: path.join(root, "base-codex-home"),
+      databasePath,
+    });
+
+    expect(result.credentialKind).toBe("oauth");
+    const auth = JSON.parse(
+      await readFile(
+        path.join(
+          store.profileDirectory(profile.id),
+          "codex-home/auth.json",
+        ),
+        "utf8",
+      ),
+    ) as { tokens?: { access_token?: string } };
+    expect(auth.tokens?.access_token).toBe("dummy-access");
   });
 });

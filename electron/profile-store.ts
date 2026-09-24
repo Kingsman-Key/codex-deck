@@ -25,6 +25,8 @@ interface SecretFile {
   secrets: Record<string, string>;
 }
 
+export const NATIVE_PROFILE_ID = "00000000-0000-4000-8000-000000000001";
+
 export class ProfileStore {
   readonly profilesDir: string;
   private readonly profileFile: string;
@@ -41,6 +43,86 @@ export class ProfileStore {
 
   async initialize(): Promise<void> {
     await mkdir(this.profilesDir, { recursive: true, mode: 0o700 });
+  }
+
+  async ensureNativeProfile(): Promise<Profile> {
+    const data = await this.readJson<ProfileFile>(this.profileFile, {
+      version: 1,
+      profiles: [],
+    });
+    const existing = data.profiles.find(
+      (profile) => profile.runtimeMode === "native",
+    );
+    if (existing) return existing;
+
+    const now = new Date().toISOString();
+    const profile: Profile = {
+      id: NATIVE_PROFILE_ID,
+      name: "当前 Codex",
+      color: "#7CFFB2",
+      provider: "chatgpt",
+      credentialKind: "oauth",
+      runtimeMode: "native",
+      configurationSource: "managed",
+      createdAt: now,
+      updatedAt: now,
+    };
+    data.profiles.unshift(profile);
+    await this.writeJson(this.profileFile, data);
+    return profile;
+  }
+
+  async enableAutoSyncForImportedProfiles(): Promise<void> {
+    const data = await this.readJson<ProfileFile>(this.profileFile, {
+      version: 1,
+      profiles: [],
+    });
+    let changed = false;
+    const now = new Date().toISOString();
+    data.profiles = data.profiles.map((profile) => {
+      if (
+        profile.configurationSource === "cc-switch" &&
+        profile.runtimeMode !== "native" &&
+        profile.provider !== "chatgpt" &&
+        !profile.autoSync
+      ) {
+        changed = true;
+        return { ...profile, autoSync: "history", updatedAt: now };
+      }
+      return profile;
+    });
+    if (changed) await this.writeJson(this.profileFile, data);
+  }
+
+  async normalizeDeepSeekProfiles(): Promise<void> {
+    const data = await this.readJson<ProfileFile>(this.profileFile, {
+      version: 1,
+      profiles: [],
+    });
+    let changed = false;
+    const now = new Date().toISOString();
+    data.profiles = data.profiles.map((profile) => {
+      if (
+        profile.credentialKind === "api-key" &&
+        profile.baseUrl?.includes("api.deepseek.com") &&
+        (profile.provider !== "deepseek" ||
+          profile.model === "deepseek-v4-flash" ||
+          profile.model === "deepseek-v4-flash-vision-exp")
+      ) {
+        changed = true;
+        return {
+          ...profile,
+          provider: "deepseek",
+          model:
+            profile.model === "deepseek-v4-pro"
+              ? "deepseek-v4-pro"
+              : "deepseek-flash",
+          updatedAt: now,
+        };
+      }
+      return profile;
+    });
+    if (changed) await this.writeJson(this.profileFile, data);
   }
 
   async list(): Promise<Profile[]> {
@@ -71,6 +153,9 @@ export class ProfileStore {
       ? data.profiles.findIndex((entry) => entry.id === normalized.id)
       : -1;
     const existing = existingIndex >= 0 ? data.profiles[existingIndex] : null;
+    if (existing?.runtimeMode === "native" && normalized.provider !== "chatgpt") {
+      throw new Error("当前 Codex 入口只能保留现有 ChatGPT/Codex 状态。");
+    }
     const id = existing?.id ?? randomUUID();
     const providerSettingsChanged = existing
       ? existing.provider !== normalized.provider ||
@@ -102,6 +187,8 @@ export class ProfileStore {
         : normalized.provider === "chatgpt"
           ? "oauth"
           : "api-key",
+      runtimeMode: existing?.runtimeMode ?? "isolated",
+      autoSync: normalized.autoSync ?? existing?.autoSync ?? "off",
       configurationSource: keepImportedConfiguration ? "cc-switch" : "managed",
       importedFrom: existing?.importedFrom,
       createdAt: existing?.createdAt ?? now,
@@ -112,7 +199,9 @@ export class ProfileStore {
     else data.profiles.push(profile);
 
     await this.writeJson(this.profileFile, data);
-    await mkdir(this.profileDirectory(id), { recursive: true, mode: 0o700 });
+    if (profile.runtimeMode !== "native") {
+      await mkdir(this.profileDirectory(id), { recursive: true, mode: 0o700 });
+    }
 
     if (normalized.apiKey) {
       await this.setSecret(id, normalized.apiKey);
@@ -147,6 +236,7 @@ export class ProfileStore {
       baseUrl: input.baseUrl,
       model: input.model,
       apiKey: input.apiKey,
+      autoSync: input.provider === "chatgpt" ? "off" : "history",
     });
     const data = await this.readJson<ProfileFile>(this.profileFile, {
       version: 1,
@@ -156,8 +246,8 @@ export class ProfileStore {
     if (index < 0) throw new Error("导入后的配置没有写入索引。");
     const imported: Profile = {
       ...data.profiles[index],
-      baseUrl: input.baseUrl,
-      model: input.model,
+      baseUrl: created.baseUrl,
+      model: created.model,
       credentialKind: input.credentialKind,
       configurationSource: "cc-switch",
       importedFrom: { kind: "cc-switch", providerId: input.sourceProviderId },
@@ -172,8 +262,12 @@ export class ProfileStore {
       version: 1,
       profiles: [],
     });
-    if (!data.profiles.some((entry) => entry.id === id)) {
+    const profile = data.profiles.find((entry) => entry.id === id);
+    if (!profile) {
       throw new Error("找不到这个配置。");
+    }
+    if (profile.runtimeMode === "native") {
+      throw new Error("“当前 Codex”是保留原聊天与登录的系统入口，不能删除。");
     }
     data.profiles = data.profiles.filter((entry) => entry.id !== id);
     await this.writeJson(this.profileFile, data);
