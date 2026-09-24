@@ -1,6 +1,6 @@
 {
   "name": "codex-deck",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "description": "Launch and focus multiple isolated Codex desktop profiles from one dashboard.",
   "main": "dist/electron/electron/main.js",
@@ -23,7 +23,8 @@
     "verify": "npm run typecheck && npm test && npm run build",
     "start": "electron .",
     "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win --x64"
   },
   "dependencies": {
     "react": "^19.1.1",
@@ -65,10 +66,20 @@
       "identity": null
     },
     "win": {
+      "icon": "buildResources/icon.ico",
       "target": [
         "nsis",
         "portable"
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
     },
     "linux": {
       "icon": "buildResources/icon.png",

@@ -12,7 +12,7 @@
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/Kingsman-Key/codex-deck/releases) 获取 macOS Apple Silicon 的 DMG/ZIP，或克隆源码后运行 `npm ci` 与 `npm run dist` 在本机生成。当前构建尚未使用 Apple Developer ID 签名和公证，因此只建议开发者测试使用；首次打开可能需要在 Finder 中右键应用并选择“打开”。
+从 [GitHub Releases](https://github.com/Kingsman-Key/codex-deck/releases) 获取 macOS Apple Silicon 的 DMG/ZIP 或 Windows x64 的安装版/免安装版 EXE，也可以克隆源码后自行构建。当前安装包尚未签名：macOS 首次打开可能需要在 Finder 中右键选择“打开”，Windows 可能显示 SmartScreen 提示。
 
 ## 已实现
 
@@ -61,7 +61,19 @@ open "release/mac-arm64/Codex Deck.app"
 npm run dist
 ```
 
+生成 Windows x64 安装版和免安装版（推荐在 Windows 或项目的 Windows GitHub Actions 中运行）：
+
+```bash
+npm run dist:win
+```
+
 未签名的本地构建只适合自己使用。正式发布仍需配置 Apple Developer ID 签名与公证。
+
+### Windows 预览版
+
+Windows 版提供 `Setup` 安装程序和 `Portable` 免安装程序。目标机器需先安装官方 ChatGPT/Codex 桌面应用；OpenAI 当前通过 Microsoft Store 分发，也可以运行 `winget install --id 9PLM9XGG6VKS -s msstore`。如果 Codex Deck 没有自动找到桌面程序，可在设置中手动选择可执行文件。[OpenAI：ChatGPT desktop app for Windows](https://learn.chatgpt.com/docs/windows/windows-app)
+
+Windows 包由 `windows-latest` 原生 GitHub Actions runner 构建并执行同一套类型检查与测试，但多实例启动、窗口聚焦、退出以及 Microsoft Store 安装路径仍需 Windows 10/11 实机回归。WSL 项目可以由官方应用处理，Codex Deck 自身仍运行在 Windows 用户环境中。
 
 ## 使用方式
 
