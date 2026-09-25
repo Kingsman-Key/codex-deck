@@ -30,7 +30,7 @@
 - profile 也可设置启动时从主库增量同步该 provider 的新增历史；已有目标记录不会被删除。
 - CC Switch 导入的非 ChatGPT provider 默认启用历史自动同步；不同 OpenAI 账号保持独立，避免同 `openai` tag 串历史。
 - 从 CC Switch 导入的 profile 可以重新注入保存过的 OAuth/API 登录态，避免 Safari 回调必须回到默认 Codex 实例。
-- DeepSeek 官方 API 预设：使用 `https://api.deepseek.com` 的 Responses API 和当前模型 ID，点击卡片即可直接启动。
+- DeepSeek 官方 API 预设：使用 `https://api.deepseek.com` 的 Responses API；隔离实例会生成受控模型目录，可在 Codex 模型选择器中切换 `deepseek-flash` 与 `deepseek-v4-pro`，推理强度提供低、高、最大三档（默认高）。
 - DeepSeek 模型请求由隔离配置和系统安全存储中的 DeepSeek Key 路由；本地复制的 Codex 登录文件只负责桌面壳，不会把 provider 改回 OpenAI。
 - 自定义 OpenAI Responses 兼容接口、Base URL 和模型 ID。
 - 启动时只读发现 CC Switch 的 Codex 配置，确认后可批量导入，不修改 CC Switch 数据库。
@@ -85,7 +85,7 @@ Windows 包由 `windows-latest` 原生 GitHub Actions runner 构建并执行同�
    - **自定义 Responses**：填写兼容 OpenAI Responses API 的地址、模型和 Key。
 3. 日常使用时只打开 Codex Deck，点击不同卡片即可进入对应窗口。“原有历史”和“独立历史”徽标会提示数据边界。
 
-DeepSeek 已提供 Responses API，Codex Deck 默认按 DeepSeek 官方 Codex 集成方式直连，不再要求先经过 OpenRouter。旧版 `deepseek-v4-flash` 会迁移为当前 `deepseek-flash`；如果你使用 `deepseek-v4-pro`，会保留该选择。[DeepSeek Codex 集成指南](https://api-docs.deepseek.com/quick_start/agent_integrations/codex/) · [DeepSeek Responses API](https://api-docs.deepseek.com/api/create-response/)
+DeepSeek 已提供 Responses API，Codex Deck 默认按 DeepSeek 官方 Codex 集成方式直连，不再要求先经过 OpenRouter。旧版 `deepseek-v4-flash` 会迁移为当前 `deepseek-flash`；隔离实例启动时会重建经过当前 Codex schema 验证的 `deepseek-models.json`，模型选择器可在 `deepseek-flash` 和 `deepseek-v4-pro` 间切换。Deck 同时写入 Codex 桌面端推理档位白名单，再与模型目录声明的能力取交集，因此 DeepSeek 模型显示低、高、最大三档而不是误缺“最大”。模型目录和桌面配置都在 Codex 启动时读取，因此升级后需要先关闭对应 DeepSeek 窗口，再从 Codex Deck 重新打开。[DeepSeek Codex 集成指南](https://api-docs.deepseek.com/quick_start/agent_integrations/codex/) · [DeepSeek Responses API](https://api-docs.deepseek.com/api/create-response/)
 
 ### 为什么独立窗口看不到旧聊天？
 
@@ -117,6 +117,7 @@ Codex Deck state/                 # 其余配置：严格隔离
     ├── codex-home/
     │   ├── config.toml            # 该配置的 provider/model
     │   ├── auth.json              # 隔离桌面壳认证；API 请求另由安全存储中的 Key 路由
+    │   ├── deepseek-models.json   # DeepSeek profile：Deck 生成并校验的可选模型目录
     │   ├── imported-config.toml   # 可选：经脱敏改写的 CC Switch 配置
     │   ├── imported-model-catalog.json # 可选：该配置的模型目录副本
     │   ├── skills -> ~/.codex/skills

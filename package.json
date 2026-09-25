@@ -1,6 +1,6 @@
 {
   "name": "codex-deck",
-  "version": "0.3.3",
+  "version": "0.3.5",
   "private": true,
   "description": "Launch and focus multiple isolated Codex desktop profiles from one dashboard.",
   "main": "dist/electron/electron/main.js",

@@ -12,6 +12,19 @@ import { constants } from "node:fs";
 import path from "node:path";
 import type { Profile } from "../src/shared/types";
 import { generateProfileConfig } from "./config-generator";
+import {
+  DEEPSEEK_MODEL_CATALOG_FILENAME,
+  serializeDeepSeekModelCatalog,
+} from "./deepseek-model-catalog";
+
+const DEEPSEEK_DESKTOP_REASONING_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "ultra",
+  "max",
+];
 
 export interface ProfilePaths {
   root: string;
@@ -55,10 +68,26 @@ export async function prepareProfileRuntime(
   const usesApiKey =
     profile.credentialKind === "api-key" ||
     (profile.provider !== "chatgpt" && !profile.credentialKind);
-  const config = normalizeRuntimeConfig(
-    rawConfig,
-    profile.provider === "deepseek" ? profile.model : undefined,
-  );
+  const deepSeekCatalogPath =
+    profile.provider === "deepseek"
+      ? path.join(paths.codexHome, DEEPSEEK_MODEL_CATALOG_FILENAME)
+      : undefined;
+  if (deepSeekCatalogPath) {
+    await writeFile(deepSeekCatalogPath, serializeDeepSeekModelCatalog(), {
+      mode: 0o600,
+    });
+    await chmod(deepSeekCatalogPath, 0o600);
+  }
+  const config = normalizeRuntimeConfig(rawConfig, {
+    model: profile.provider === "deepseek" ? profile.model : undefined,
+    modelCatalogPath: deepSeekCatalogPath,
+    reasoningEffort: profile.provider === "deepseek" ? "high" : undefined,
+    removeReviewModel: profile.provider === "deepseek",
+    desktopReasoningEfforts:
+      profile.provider === "deepseek"
+        ? DEEPSEEK_DESKTOP_REASONING_EFFORTS
+        : undefined,
+  });
   await writeFile(configPath, config, { mode: 0o600 });
   await chmod(configPath, 0o600);
   if (usesApiKey) {
@@ -75,29 +104,128 @@ export async function prepareProfileRuntime(
   return paths;
 }
 
+export interface RuntimeConfigOverrides {
+  model?: string;
+  modelCatalogPath?: string;
+  reasoningEffort?: string;
+  removeReviewModel?: boolean;
+  desktopReasoningEfforts?: string[];
+}
+
 export function normalizeRuntimeConfig(
   config: string,
-  modelOverride?: string,
+  overrides: RuntimeConfigOverrides = {},
 ): string {
-  let insideSection = false;
-  const lines = config.split(/\r?\n/).flatMap((line) => {
-    if (/^\s*\[[^\]]+\]\s*(?:#.*)?$/.test(line)) insideSection = true;
+  let currentSection: string | undefined;
+  let replacedModel = false;
+  let replacedReasoningEffort = false;
+  let foundDesktopSection = false;
+  let wroteDesktopReasoningEfforts = false;
+  const sectionPattern = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/;
+  const desktopReasoningEffortsAssignment = overrides.desktopReasoningEfforts
+    ? `enabled-reasoning-efforts = ${JSON.stringify(overrides.desktopReasoningEfforts)}`
+    : undefined;
+  const lines: string[] = [];
+
+  for (const line of config.split(/\r?\n/)) {
+    const sectionMatch = line.match(sectionPattern);
+    if (sectionMatch) {
+      if (
+        currentSection === "desktop" &&
+        desktopReasoningEffortsAssignment &&
+        !wroteDesktopReasoningEfforts
+      ) {
+        lines.push(desktopReasoningEffortsAssignment);
+        wroteDesktopReasoningEfforts = true;
+      }
+      currentSection = sectionMatch[1].trim().toLowerCase();
+      if (currentSection === "desktop") foundDesktopSection = true;
+    }
     if (
       /^\s*["']?(?:model_catalog_json|preferred_auth_method|forced_login_method)["']?\s*=/i.test(
         line,
       )
     ) {
-      return [];
+      continue;
     }
     if (
-      modelOverride &&
-      !insideSection &&
+      overrides.removeReviewModel &&
+      !currentSection &&
+      /^\s*["']?review_model["']?\s*=/i.test(line)
+    ) {
+      continue;
+    }
+    if (
+      overrides.model &&
+      !currentSection &&
       /^\s*["']?model["']?\s*=/i.test(line)
     ) {
-      return [`model = ${JSON.stringify(modelOverride)}`];
+      replacedModel = true;
+      lines.push(`model = ${JSON.stringify(overrides.model)}`);
+      continue;
     }
-    return [line];
-  });
+    if (
+      overrides.reasoningEffort &&
+      !currentSection &&
+      /^\s*["']?model_reasoning_effort["']?\s*=/i.test(line)
+    ) {
+      replacedReasoningEffort = true;
+      lines.push(
+        `model_reasoning_effort = ${JSON.stringify(overrides.reasoningEffort)}`,
+      );
+      continue;
+    }
+    if (
+      currentSection === "desktop" &&
+      desktopReasoningEffortsAssignment &&
+      /^\s*["']?enabled-reasoning-efforts["']?\s*=/i.test(line)
+    ) {
+      if (!wroteDesktopReasoningEfforts) {
+        lines.push(desktopReasoningEffortsAssignment);
+        wroteDesktopReasoningEfforts = true;
+      }
+      continue;
+    }
+    lines.push(line);
+  }
+
+  if (
+    currentSection === "desktop" &&
+    desktopReasoningEffortsAssignment &&
+    !wroteDesktopReasoningEfforts
+  ) {
+    lines.push(desktopReasoningEffortsAssignment);
+    wroteDesktopReasoningEfforts = true;
+  }
+
+  const managedAssignments: string[] = [];
+  if (overrides.model && !replacedModel) {
+    managedAssignments.push(`model = ${JSON.stringify(overrides.model)}`);
+  }
+  if (overrides.reasoningEffort && !replacedReasoningEffort) {
+    managedAssignments.push(
+      `model_reasoning_effort = ${JSON.stringify(overrides.reasoningEffort)}`,
+    );
+  }
+  if (overrides.modelCatalogPath) {
+    managedAssignments.push(
+      `model_catalog_json = ${JSON.stringify(overrides.modelCatalogPath)}`,
+    );
+  }
+  if (managedAssignments.length > 0) {
+    const firstSection = lines.findIndex((line) => sectionPattern.test(line));
+    lines.splice(
+      firstSection === -1 ? lines.length : firstSection,
+      0,
+      ...managedAssignments,
+      "",
+    );
+  }
+
+  if (desktopReasoningEffortsAssignment && !foundDesktopSection) {
+    lines.push("", "[desktop]", desktopReasoningEffortsAssignment);
+  }
+
   return `${lines
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")

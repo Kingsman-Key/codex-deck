@@ -24,16 +24,104 @@ function profile(overrides: Partial<Profile>): Profile {
 }
 
 describe("profile runtime", () => {
-  it("removes obsolete imported model catalogs before Codex parses config", () => {
+  it("replaces obsolete imported model settings with managed DeepSeek values", () => {
     const config = normalizeRuntimeConfig(
-      'cli_auth_credentials_store = "file"\npreferred_auth_method = "apikey"\nforced_login_method = "api"\nmodel_catalog_json = "/old/catalog.json"\nmodel = "deepseek-flash"\n',
-      "deepseek-v4-pro",
+      'cli_auth_credentials_store = "file"\npreferred_auth_method = "apikey"\nforced_login_method = "api"\nmodel_catalog_json = "/old/catalog.json"\nmodel = "deepseek-flash"\nreview_model = "deepseek-v4-flash"\nmodel_reasoning_effort = "xhigh"\n\n[desktop]\nfollowUpQueueMode = "queue"\nenabled-reasoning-efforts = ["low", "high"]\n\n[features]\nunified_exec = true\n',
+      {
+        model: "deepseek-v4-pro",
+        modelCatalogPath: "/managed/deepseek-models.json",
+        reasoningEffort: "high",
+        removeReviewModel: true,
+        desktopReasoningEfforts: [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "ultra",
+          "max",
+        ],
+      },
     );
 
-    expect(config).not.toContain("model_catalog_json");
+    expect(config).not.toContain("/old/catalog.json");
+    expect(config).toContain(
+      'model_catalog_json = "/managed/deepseek-models.json"',
+    );
     expect(config).toContain('model = "deepseek-v4-pro"');
+    expect(config).toContain('model_reasoning_effort = "high"');
+    expect(config).not.toContain("review_model");
     expect(config).not.toContain("preferred_auth_method");
     expect(config).not.toContain("forced_login_method");
+    expect(config.match(/\[desktop\]/g)).toHaveLength(1);
+    expect(config).toContain('followUpQueueMode = "queue"');
+    expect(config).toContain(
+      'enabled-reasoning-efforts = ["low","medium","high","xhigh","ultra","max"]',
+    );
+    expect(config).toContain("[features]\nunified_exec = true");
+  });
+
+  it("writes a validated DeepSeek model catalog for the desktop picker", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "codex-deck-deepseek-"));
+    const base = path.join(root, "current");
+    const profiles = path.join(root, "profiles");
+    await mkdir(base, { recursive: true });
+    await writeFile(path.join(base, "auth.json"), '{"token":"current"}\n');
+
+    const deepSeekProfile = profile({
+      provider: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-flash",
+      credentialKind: "api-key",
+      runtimeMode: "isolated",
+      configurationSource: "cc-switch",
+    });
+    const profileRoot = path.join(profiles, deepSeekProfile.id);
+    await mkdir(profileRoot, { recursive: true });
+    await writeFile(
+      path.join(profileRoot, "imported-config.toml"),
+      [
+        'model_catalog_json = "/old/cc-switch-models.json"',
+        'model = "deepseek-v4-flash"',
+        'review_model = "deepseek-v4-flash"',
+        'model_reasoning_effort = "xhigh"',
+        'model_provider = "custom"',
+        "",
+        "[model_providers.custom]",
+        'name = "deepseek"',
+        'base_url = "https://api.deepseek.com"',
+        'wire_api = "responses"',
+        'env_key = "CODEX_DECK_API_KEY"',
+      ].join("\n"),
+    );
+    const paths = await prepareProfileRuntime(profiles, base, deepSeekProfile);
+    const config = await readFile(
+      path.join(paths.codexHome, "config.toml"),
+      "utf8",
+    );
+    const catalogPath = path.join(paths.codexHome, "deepseek-models.json");
+    const catalog = JSON.parse(await readFile(catalogPath, "utf8")) as {
+      models: Array<{ slug: string; experimental_supported_tools: string[] }>;
+    };
+
+    expect(config).toContain(
+      `model_catalog_json = ${JSON.stringify(catalogPath)}`,
+    );
+    expect(config).not.toContain("/old/cc-switch-models.json");
+    expect(config).not.toContain("review_model");
+    expect(config).toContain('model_reasoning_effort = "high"');
+    expect(config.match(/\[desktop\]/g)).toHaveLength(1);
+    expect(config).toContain(
+      'enabled-reasoning-efforts = ["low","medium","high","xhigh","ultra","max"]',
+    );
+    expect(catalog.models.map((model) => model.slug)).toEqual([
+      "deepseek-flash",
+      "deepseek-v4-pro",
+    ]);
+    expect(
+      catalog.models.every((model) =>
+        Array.isArray(model.experimental_supported_tools),
+      ),
+    ).toBe(true);
   });
 
   it("returns the untouched current Codex home for the native profile", async () => {
