@@ -189,6 +189,8 @@ export class ProfileStore {
           : "api-key",
       runtimeMode: existing?.runtimeMode ?? "isolated",
       autoSync: normalized.autoSync ?? existing?.autoSync ?? "off",
+      harnessEnabled:
+        normalized.harnessEnabled ?? existing?.harnessEnabled ?? false,
       configurationSource: keepImportedConfiguration ? "cc-switch" : "managed",
       importedFrom: existing?.importedFrom,
       createdAt: existing?.createdAt ?? now,

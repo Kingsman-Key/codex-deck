@@ -19,6 +19,9 @@ const api: CodexDeckApi = {
     ipcRenderer.invoke("profiles:handoff-context", sourceId, targetId),
   refreshCcSwitchAuth: (id: string) =>
     ipcRenderer.invoke("profiles:refresh-cc-switch-auth", id),
+  getHarnessStatus: () => ipcRenderer.invoke("harness:status"),
+  runHarnessCheck: (profileId?: string) =>
+    ipcRenderer.invoke("harness:check-now", profileId),
   getSystemStatus: () => ipcRenderer.invoke("system:status"),
   scanCcSwitch: () => ipcRenderer.invoke("cc-switch:scan"),
   importCcSwitch: (sourceIds: string[]) =>
@@ -29,6 +32,11 @@ const api: CodexDeckApi = {
     const listener = () => callback();
     ipcRenderer.on("profiles:changed", listener);
     return () => ipcRenderer.removeListener("profiles:changed", listener);
+  },
+  onHarnessChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("harness:changed", listener);
+    return () => ipcRenderer.removeListener("harness:changed", listener);
   },
 };
 

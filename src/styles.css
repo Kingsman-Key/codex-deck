@@ -247,6 +247,11 @@ footer {
   color: #8effba;
 }
 
+.harness-button {
+  border-color: rgba(168, 199, 250, 0.38);
+  color: #b8d2ff;
+}
+
 .hero {
   min-height: 218px;
   display: flex;
@@ -503,6 +508,114 @@ footer {
   text-transform: uppercase;
 }
 
+.harness-badge {
+  padding: 2px 5px;
+  border: 1px solid rgba(168, 199, 250, 0.3);
+  border-radius: 4px;
+  color: #9ebce9;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.profile-context-menu {
+  position: fixed;
+  z-index: 40;
+  width: 286px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid #353d38;
+  border-radius: 10px;
+  color: #cdd5d0;
+  background:
+    linear-gradient(145deg, rgba(168, 199, 250, 0.06), transparent 45%),
+    rgba(18, 21, 19, 0.98);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.48);
+  animation: context-menu-in 120ms ease-out;
+}
+
+@keyframes context-menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.context-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.context-menu-head > div {
+  min-width: 0;
+}
+
+.context-menu-head strong {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: #eef3ef;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-context-menu > p {
+  margin: 11px 0;
+  color: #7f8983;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.context-menu-error,
+.context-menu-warning {
+  display: block;
+  margin: 0 0 10px;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.context-menu-error { color: #d5929b; }
+.context-menu-warning { color: #d9aa72; }
+
+.context-menu-actions {
+  display: grid;
+  gap: 5px;
+}
+
+.context-menu-actions button {
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #aab3ad;
+  background: #202522;
+  font-size: 10px;
+  text-align: left;
+}
+
+.context-menu-actions button:hover:not(:disabled) {
+  color: #f5f8f6;
+  background: #292f2b;
+}
+
+.context-menu-actions button.primary-action {
+  border-color: rgba(124, 255, 178, 0.22);
+  color: #92d8aa;
+  background: rgba(124, 255, 178, 0.08);
+}
+
+.context-menu-actions button.danger-action {
+  color: #d99aa3;
+}
+
+.context-menu-actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 .history-badge {
   padding: 2px 5px;
   border: 1px solid #303632;
@@ -664,6 +777,177 @@ footer {
   width: min(100%, 590px);
 }
 
+.harness-dialog {
+  width: min(100%, 650px);
+}
+
+.harness-policy {
+  margin: 0 0 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.harness-policy span {
+  padding: 5px 8px;
+  border: 1px solid #2d342f;
+  border-radius: 5px;
+  color: #77817b;
+  background: #0e100f;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+}
+
+.harness-profile-list {
+  display: grid;
+  gap: 7px;
+}
+
+.harness-warning {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 184, 107, 0.28);
+  border-radius: 7px;
+  color: #d9aa72;
+  background: rgba(255, 184, 107, 0.06);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.harness-profile {
+  min-height: 70px;
+  padding: 12px 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #2d342f;
+  border-radius: 8px;
+  background: #0e100f;
+}
+
+.harness-profile-copy {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 5px 9px;
+}
+
+.harness-profile-copy strong {
+  overflow: hidden;
+  color: #d8dfda;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harness-profile-copy small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: #6f7872;
+  font-size: 9px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.harness-profile-copy small.harness-error {
+  color: #d5929b;
+  white-space: normal;
+}
+
+.harness-state {
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #79817c;
+  background: #242925;
+  font-size: 8px;
+}
+
+.harness-state.monitoring {
+  color: #83cf9f;
+  background: rgba(124, 255, 178, 0.09);
+}
+
+.harness-state.waiting-network {
+  color: #f3bc76;
+  background: rgba(255, 184, 107, 0.1);
+}
+
+.harness-state.error,
+.harness-state.unsupported {
+  color: #e3939e;
+  background: rgba(255, 140, 155, 0.09);
+}
+
+.switch-control {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.switch-control input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-control span {
+  position: absolute;
+  inset: 0;
+  border: 1px solid #39413c;
+  border-radius: 999px;
+  background: #232824;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.switch-control span::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #858e88;
+  transition: transform 150ms ease, background 150ms ease;
+}
+
+.switch-control input:checked + span {
+  border-color: #6bcc94;
+  background: rgba(124, 255, 178, 0.15);
+}
+
+.switch-control input:checked + span::after {
+  background: #7cffb2;
+  transform: translateX(16px);
+}
+
+.switch-control input:focus-visible + span {
+  outline: 2px solid #7cffb2;
+  outline-offset: 2px;
+}
+
+.harness-footnote {
+  margin: 14px 0 0;
+  color: #68716b;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.harness-dialog .modal-actions {
+  position: sticky;
+  z-index: 2;
+  bottom: -10px;
+  margin: 16px -10px -10px;
+  padding: 18px 10px 10px;
+  border-top: 1px solid #242925;
+  background: #121513;
+}
+
 .provider-picker {
   margin: 0 0 17px;
   padding: 0;
@@ -753,6 +1037,8 @@ footer {
 .check-row span { display: grid; gap: 4px; }
 .check-row strong { font-size: 11px; }
 .check-row small { color: #69716c; font-size: 9px; }
+
+.harness-toggle { margin-top: 14px; }
 
 .color-row {
   margin-top: 17px;

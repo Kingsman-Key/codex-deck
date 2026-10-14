@@ -40,6 +40,7 @@
 - Skills 与 Plugins 复用主 `~/.codex` 目录，其余状态保持隔离。
 - 删除配置时把数据移入系统废纸篓，而不是直接永久删除。
 - `⌘/Ctrl + 1…9` 快速打开前九个配置。
+- 内置 AI Harness：按 profile 监控正在执行的任务；若一轮因网络、超时、流中断、`at capacity`、临时限流或服务端短暂故障而停止，通过 Codex 自带队列安全补发“继续”。
 
 ## 直接运行
 
@@ -84,6 +85,7 @@ Windows 包由 `windows-latest` 原生 GitHub Actions runner 构建并执行同�
    - **DeepSeek · OpenRouter**：兼容旧配置；填写 OpenRouter Key 和对应模型 ID。
    - **自定义 Responses**：填写兼容 OpenAI Responses API 的地址、模型和 Key。
 3. 日常使用时只打开 Codex Deck，点击不同卡片即可进入对应窗口。“原有历史”和“独立历史”徽标会提示数据边界。
+4. 需要长任务自动应对断网、`at capacity` 或临时服务故障时，在“设置 → AI Harness”中为对应配置打开开关；也可以在编辑配置时启用。
 
 DeepSeek 已提供 Responses API，Codex Deck 默认按 DeepSeek 官方 Codex 集成方式直连，不再要求先经过 OpenRouter。旧版 `deepseek-v4-flash` 会迁移为当前 `deepseek-flash`；隔离实例启动时会重建经过当前 Codex schema 验证的 `deepseek-models.json`，模型选择器可在 `deepseek-flash` 和 `deepseek-v4-pro` 间切换。Deck 同时写入 Codex 桌面端推理档位白名单，再与模型目录声明的能力取交集，因此 DeepSeek 模型显示低、高、最大三档而不是误缺“最大”。模型目录和桌面配置都在 Codex 启动时读取，因此升级后需要先关闭对应 DeepSeek 窗口，再从 Codex Deck 重新打开。[DeepSeek Codex 集成指南](https://api-docs.deepseek.com/quick_start/agent_integrations/codex/) · [DeepSeek Responses API](https://api-docs.deepseek.com/api/create-response/)
 
@@ -105,6 +107,21 @@ Codex Deck 启动时会自动只读检查 `~/.cc-switch/cc-switch.db`。发现�
 
 导入不会修改或删除 CC Switch 中的任何内容，也不会在预览界面显示 Key、Token 或 Cookie。远程 HTTP provider 会按安全规则禁用；localhost、127.0.0.1 和 ::1 仍允许 HTTP。重复导入会根据来源 ID 识别并跳过。
 
+## AI Harness 临时故障自动续跑
+
+AI Harness 已作为 Codex Deck 主进程的一部分运行，不需要另外安装 zsh 脚本或 macOS LaunchAgent，也不依赖模拟键盘。每个 profile 都有独立开关，守护器会自动找到该实例的 `CODEX_HOME`、会话数据库和 rollout 文件：
+
+1. 先观察到任务进入 `task_started`，或确认失败事件是在启用 Harness 后产生；不会在首次启用时唤醒旧失败聊天。
+2. 只接受 `task_complete` 中明确命中连接失败、超时、流中断、DNS/socket、远程 compact 失败、`at capacity`、服务过载、HTTP 429 或临时 5xx 的错误；正常结束、代码错误、权限错误、认证失败以及额度/余额用尽都跳过。
+3. rollout 至少静默 45 秒后才处理，并对同一失败事件设置 5 分钟冷却和持久化去重。
+4. 使用 profile 的真实 provider 地址探测网络；恢复后调用桌面应用内置的 `codex queue --thread … --message 继续`，不抢窗口焦点，也不需要辅助功能权限。
+
+状态面板会显示“监控中 / 等待网络恢复 / 检查异常”、最近续跑的会话和安全参数。Harness 仅在 Codex Deck 进程存活时工作；macOS 关闭最后一个窗口后应用仍可驻留，Windows 当前关闭应用会停止监控。唯一的会话写操作是向 Codex 队列投递一条消息，原始会话库和 rollout 始终只读。
+
+在 Codex Deck 首页右键任意配置卡片，会在鼠标旁弹出 AI Harness 快捷面板，可直接查看该实例状态、启停监控、立即检查或进入完整状态面板。这个入口属于 Deck 自己的稳定界面，不向官方 Codex 窗口注入菜单，因此无需辅助功能权限；监控范围是该 profile 内新发生的任务，不是单独绑定某一条旧聊天。
+
+如果本机仍加载早期独立版 `com.zhouhaibo.codex-keepalive` LaunchAgent，状态面板会显示冲突提醒。同一会话不要同时交给独立脚本和 Deck 内置 Harness，避免两边各投递一次；Deck 不会擅自停止或删除旧守护进程。
+
 ## 隔离结构
 
 ```text
@@ -113,6 +130,7 @@ Codex Deck 启动时会自动只读检查 `~/.cc-switch/cc-switch.db`。发现�
 Codex Deck state/                 # 其余配置：严格隔离
 ├── profiles.json                  # 名称、颜色、provider 等非敏感元数据
 ├── secrets.json                   # safeStorage 加密后的 API Key
+├── ai-harness-state.json          # 已续跑事件指纹与冷却时间，不含消息正文或凭据
 └── profiles/<profile-id>/
     ├── codex-home/
     │   ├── config.toml            # 该配置的 provider/model
@@ -161,6 +179,7 @@ CODEX_SQLITE_HOME=<profile>/codex-home
 - `auth.json` 和 API Key 都按密码处理，不会写入日志或 Git。
 - 元数据与加密密钥文件分离，配置文件只保存环境变量名。
 - 自定义远端地址必须是 HTTPS；只有 localhost/127.0.0.1/::1 允许 HTTP。
+- AI Harness 只读会话索引与 rollout，只对 Deck 运行期间观察到的可安全重试临时故障调用 Codex 队列；事件指纹用于去重，不记录 Key、Token 或完整会话内容。
 - 本项目是社区工具，与 OpenAI、DeepSeek、OpenRouter 均无隶属或官方合作关系。
 
 ## 开发与验证

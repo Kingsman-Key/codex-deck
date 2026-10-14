@@ -22,6 +22,7 @@ export interface Profile {
   credentialKind?: CredentialKind;
   runtimeMode?: RuntimeMode;
   autoSync?: AutoSyncMode;
+  harnessEnabled?: boolean;
   configurationSource?: "managed" | "cc-switch";
   importedFrom?: ImportedProfileSource;
   createdAt: string;
@@ -38,6 +39,7 @@ export interface ProfileInput {
   apiKey?: string;
   importCurrentSession?: boolean;
   autoSync?: AutoSyncMode;
+  harnessEnabled?: boolean;
 }
 
 export interface ProfileView extends Profile {
@@ -114,6 +116,36 @@ export interface CcSwitchAuthRefreshResult {
   credentialKind: CredentialKind;
 }
 
+export type HarnessProfileState =
+  | "disabled"
+  | "monitoring"
+  | "waiting-network"
+  | "unsupported"
+  | "error";
+
+export interface HarnessProfileStatus {
+  profileId: string;
+  profileName: string;
+  enabled: boolean;
+  state: HarnessProfileState;
+  network: "unknown" | "online" | "offline";
+  monitoredThreads: number;
+  lastCheckAt?: string;
+  lastResumeAt?: string;
+  lastResumeThread?: string;
+  lastError?: string;
+}
+
+export interface HarnessStatus {
+  running: boolean;
+  legacyAgentDetected: boolean;
+  pollSeconds: number;
+  quietSeconds: number;
+  cooldownSeconds: number;
+  updatedAt?: string;
+  profiles: HarnessProfileStatus[];
+}
+
 export interface CodexDeckApi {
   listProfiles(): Promise<ProfileView[]>;
   saveProfile(input: ProfileInput): Promise<ProfileView>;
@@ -132,10 +164,13 @@ export interface CodexDeckApi {
     targetId: string,
   ): Promise<ContextHandoffResult>;
   refreshCcSwitchAuth(id: string): Promise<CcSwitchAuthRefreshResult>;
+  getHarnessStatus(): Promise<HarnessStatus>;
+  runHarnessCheck(profileId?: string): Promise<HarnessStatus>;
   getSystemStatus(): Promise<SystemStatus>;
   scanCcSwitch(): Promise<CcSwitchScanResult>;
   importCcSwitch(sourceIds: string[]): Promise<CcSwitchImportResult>;
   chooseExecutable(): Promise<string | null>;
   openDataFolder(): Promise<void>;
   onProfilesChanged(callback: () => void): () => void;
+  onHarnessChanged(callback: () => void): () => void;
 }

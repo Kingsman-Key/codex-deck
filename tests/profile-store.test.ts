@@ -56,6 +56,20 @@ describe("ProfileStore", () => {
     expect((await store.get(profile.id)).autoSync).toBe("context");
   });
 
+  it("persists the per-profile AI Harness preference", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "codex-deck-test-"));
+    const store = new ProfileStore(root, encryption);
+    await store.initialize();
+    const profile = await store.save({
+      name: "Guarded",
+      color: "#7CFFB2",
+      provider: "chatgpt",
+      harnessEnabled: true,
+    });
+
+    expect((await store.get(profile.id)).harnessEnabled).toBe(true);
+  });
+
   it("enables history auto-sync for existing CC Switch imports", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "codex-deck-test-"));
     const store = new ProfileStore(root, encryption);

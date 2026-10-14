@@ -37,10 +37,12 @@ import {
   transferProfileHistory,
 } from "./history-migration";
 import { syncProjectStateFromMaster } from "./project-state-sync";
+import { AiHarnessManager } from "./ai-harness";
 
 let mainWindow: BrowserWindow | null = null;
 let profileStore: ProfileStore;
 let launcher: ProfileLauncher;
+let aiHarness: AiHarnessManager;
 let dataRoot: string;
 let baseCodexHome: string;
 
@@ -76,6 +78,10 @@ function createWindow(): void {
 
 function emitProfilesChanged(): void {
   mainWindow?.webContents.send("profiles:changed");
+}
+
+function emitHarnessChanged(): void {
+  mainWindow?.webContents.send("harness:changed");
 }
 
 async function getSettings(): Promise<Settings> {
@@ -211,6 +217,9 @@ function registerIpc(): void {
       await importCurrentAuth(baseCodexHome, paths.codexHome);
     }
     emitProfilesChanged();
+    void aiHarness.runNow(profile.id).catch((error) => {
+      console.warn("Could not refresh AI Harness:", error);
+    });
     return (await listProfileViews()).find((entry) => entry.id === profile.id);
   });
 
@@ -226,6 +235,9 @@ function registerIpc(): void {
     if (await exists(directory)) await shell.trashItem(directory);
     await profileStore.remove(id);
     emitProfilesChanged();
+    void aiHarness.runNow().catch((error) => {
+      console.warn("Could not refresh AI Harness:", error);
+    });
   });
 
   ipcMain.handle("profiles:launch", async (_event, id: string) => {
@@ -335,6 +347,18 @@ function registerIpc(): void {
     codexHome: baseCodexHome,
   }));
 
+  ipcMain.handle("harness:status", () => aiHarness.getStatus());
+
+  ipcMain.handle("harness:check-now", async (_event, profileId: unknown) => {
+    if (
+      profileId !== undefined &&
+      (typeof profileId !== "string" || !/^[0-9a-f-]{36}$/i.test(profileId))
+    ) {
+      throw new Error("AI Harness 配置 ID 无效。");
+    }
+    return aiHarness.runNow(profileId);
+  });
+
   ipcMain.handle("cc-switch:scan", async () =>
     scanCcSwitch(await profileStore.list()),
   );
@@ -397,6 +421,14 @@ app.whenReady().then(async () => {
   await profileStore.enableAutoSyncForImportedProfiles();
   await profileStore.normalizeDeepSeekProfiles();
   launcher = new ProfileLauncher(emitProfilesChanged);
+  aiHarness = new AiHarnessManager({
+    dataRoot,
+    profilesDir: profileStore.profilesDir,
+    baseCodexHome,
+    getProfiles: () => profileStore.list(),
+    resolveDesktopExecutable: resolveExecutable,
+    onChanged: emitHarnessChanged,
+  });
   const desktopExecutable = await resolveExecutable();
   const profiles = await profileStore.list();
   if (desktopExecutable) {
@@ -433,6 +465,9 @@ app.whenReady().then(async () => {
   }
   registerIpc();
   createWindow();
+  void aiHarness.start().catch((error) => {
+    console.warn("Could not start AI Harness:", error);
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -441,4 +476,8 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  aiHarness?.stop();
 });

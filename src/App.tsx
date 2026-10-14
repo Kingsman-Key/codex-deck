@@ -3,6 +3,7 @@ import type {
   AutoSyncMode,
   CcSwitchImportResult,
   CcSwitchScanResult,
+  HarnessStatus,
   ProfileInput,
   ProfileView,
   ProviderKind,
@@ -18,27 +19,40 @@ const PROVIDER_META: Record<ProviderKind, { label: string; short: string }> = {
   custom: { label: "自定义 Responses", short: "API" },
 };
 
+interface ProfileContextMenuState {
+  profileId: string;
+  x: number;
+  y: number;
+}
+
 function App() {
   const [profiles, setProfiles] = useState<ProfileView[]>([]);
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [ccSwitchScan, setCcSwitchScan] = useState<CcSwitchScanResult | null>(null);
+  const [harnessStatus, setHarnessStatus] = useState<HarnessStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editor, setEditor] = useState<ProfileView | "new" | null>(null);
   const [historyProfile, setHistoryProfile] = useState<ProfileView | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showCcSwitchImport, setShowCcSwitchImport] = useState(false);
+  const [showHarness, setShowHarness] = useState(false);
+  const [profileContextMenu, setProfileContextMenu] =
+    useState<ProfileContextMenuState | null>(null);
+  const [harnessActionBusy, setHarnessActionBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [nextProfiles, nextStatus, nextCcSwitchScan] = await Promise.all([
+    const [nextProfiles, nextStatus, nextCcSwitchScan, nextHarnessStatus] = await Promise.all([
       window.codexDeck.listProfiles(),
       window.codexDeck.getSystemStatus(),
       window.codexDeck.scanCcSwitch(),
+      window.codexDeck.getHarnessStatus(),
     ]);
     setProfiles(nextProfiles);
     setStatus(nextStatus);
     setCcSwitchScan(nextCcSwitchScan);
+    setHarnessStatus(nextHarnessStatus);
     setLoading(false);
   }, []);
 
@@ -49,6 +63,14 @@ function App() {
     });
     return window.codexDeck.onProfilesChanged(() => void refresh());
   }, [refresh]);
+
+  useEffect(
+    () =>
+      window.codexDeck.onHarnessChanged(() => {
+        void window.codexDeck.getHarnessStatus().then(setHarnessStatus);
+      }),
+    [],
+  );
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -68,6 +90,26 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  useEffect(() => {
+    if (!profileContextMenu) return;
+    const close = () => setProfileContextMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("blur", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [profileContextMenu]);
+
   const runningCount = useMemo(
     () => profiles.filter((profile) => profile.running).length,
     [profiles],
@@ -79,6 +121,61 @@ function App() {
       ).length ?? 0,
     [ccSwitchScan],
   );
+  const harnessEnabledCount = useMemo(
+    () => profiles.filter((profile) => profile.harnessEnabled).length,
+    [profiles],
+  );
+  const contextProfile = profileContextMenu
+    ? profiles.find((profile) => profile.id === profileContextMenu.profileId) ?? null
+    : null;
+  const contextHarnessStatus = contextProfile
+    ? harnessStatus?.profiles.find((item) => item.profileId === contextProfile.id)
+    : undefined;
+
+  function openProfileContextMenu(
+    event: React.MouseEvent<HTMLElement>,
+    profile: ProfileView,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const menuWidth = 286;
+    const menuHeight = 250;
+    const edge = 12;
+    setProfileContextMenu({
+      profileId: profile.id,
+      x: Math.max(edge, Math.min(event.clientX, window.innerWidth - menuWidth - edge)),
+      y: Math.max(edge, Math.min(event.clientY, window.innerHeight - menuHeight - edge)),
+    });
+  }
+
+  async function toggleHarness(profile: ProfileView, enabled: boolean) {
+    setHarnessActionBusy(true);
+    try {
+      await window.codexDeck.saveProfile(profileHarnessInput(profile, enabled));
+      setToast(
+        enabled
+          ? `已为「${profile.name}」启用 AI Harness`
+          : `已为「${profile.name}」关闭 AI Harness`,
+      );
+      await refresh();
+    } catch (error) {
+      setToast(cleanError(error));
+    } finally {
+      setHarnessActionBusy(false);
+    }
+  }
+
+  async function checkHarnessNow() {
+    setHarnessActionBusy(true);
+    try {
+      setHarnessStatus(await window.codexDeck.runHarnessCheck());
+      setToast("AI Harness 已完成一次检查");
+    } catch (error) {
+      setToast(cleanError(error));
+    } finally {
+      setHarnessActionBusy(false);
+    }
+  }
 
   async function launch(profile: ProfileView) {
     setBusyId(profile.id);
@@ -181,6 +278,12 @@ function App() {
             </p>
           </div>
           <div className="settings-actions">
+            <button
+              className={`text-button ${harnessEnabledCount ? "harness-button" : ""}`}
+              onClick={() => setShowHarness(true)}
+            >
+              AI Harness{harnessEnabledCount ? ` (${harnessEnabledCount})` : ""}
+            </button>
             {ccSwitchScan?.found && (
               <button
                 className="text-button import-button"
@@ -256,6 +359,8 @@ function App() {
                 className={`profile-card ${profile.running ? "is-running" : ""} ${profile.runtimeMode === "native" ? "is-native" : ""}`}
                 style={{ "--accent": profile.color } as React.CSSProperties}
                 onClick={() => void launch(profile)}
+                onContextMenu={(event) => openProfileContextMenu(event, profile)}
+                title="左键打开；右键管理 AI Harness"
               >
                 <div className="card-stripe" />
                 <div className="card-head">
@@ -326,6 +431,9 @@ function App() {
                     {profile.importedFrom?.kind === "cc-switch" && (
                       <span className="imported-badge">CC Switch</span>
                     )}
+                    {profile.harnessEnabled && (
+                      <span className="harness-badge">AI Harness</span>
+                    )}
                   </p>
                   {profile.model && <code className="model-name">{profile.model}</code>}
                 </div>
@@ -352,6 +460,71 @@ function App() {
           {status?.encryptionAvailable ? "API Key 受系统安全存储保护" : "系统安全存储不可用"}
         </span>
       </footer>
+
+      {profileContextMenu && contextProfile && harnessStatus && (
+        <section
+          className="profile-context-menu"
+          role="menu"
+          aria-label={`${contextProfile.name} AI Harness`}
+          style={{ left: profileContextMenu.x, top: profileContextMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <div className="context-menu-head">
+            <div>
+              <span className="eyebrow">AI HARNESS</span>
+              <strong>{contextProfile.name}</strong>
+            </div>
+            <span className={`harness-state ${contextHarnessStatus?.state ?? "disabled"}`}>
+              {describeHarnessState(contextHarnessStatus?.state ?? "disabled")}
+            </span>
+          </div>
+          <p>监控此实例的新连接中断、服务繁忙与临时限流，恢复后自动排队“继续”。</p>
+          {contextHarnessStatus?.lastError && (
+            <small className="context-menu-error">{contextHarnessStatus.lastError}</small>
+          )}
+          {harnessStatus.legacyAgentDetected && (
+            <small className="context-menu-warning">旧版守护进程仍在运行，避免重复监控。</small>
+          )}
+          <div className="context-menu-actions">
+            <button
+              type="button"
+              role="menuitem"
+              className={contextProfile.harnessEnabled ? "danger-action" : "primary-action"}
+              disabled={harnessActionBusy}
+              onClick={() =>
+                void toggleHarness(contextProfile, !contextProfile.harnessEnabled)
+              }
+            >
+              {harnessActionBusy
+                ? "处理中…"
+                : contextProfile.harnessEnabled
+                  ? "关闭此实例 Harness"
+                  : "启用此实例 Harness"}
+            </button>
+            {contextProfile.harnessEnabled && (
+              <button
+                type="button"
+                role="menuitem"
+                disabled={harnessActionBusy}
+                onClick={() => void checkHarnessNow()}
+              >
+                立即检查已启用实例
+              </button>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setProfileContextMenu(null);
+                setShowHarness(true);
+              }}
+            >
+              打开完整 Harness 面板
+            </button>
+          </div>
+        </section>
+      )}
 
       {editor && (
         <ProfileEditor
@@ -393,6 +566,19 @@ function App() {
         />
       )}
 
+      {showHarness && harnessStatus && (
+        <HarnessDialog
+          profiles={profiles}
+          status={harnessStatus}
+          onClose={() => setShowHarness(false)}
+          onChanged={async (message) => {
+            setToast(message);
+            await refresh();
+          }}
+          onStatusChange={setHarnessStatus}
+        />
+      )}
+
       {toast && <div className="toast">{toast}</div>}
     </main>
   );
@@ -418,6 +604,9 @@ function ProfileEditor({
   const [importCurrentSession, setImportCurrentSession] = useState(false);
   const [autoSync, setAutoSync] = useState<AutoSyncMode>(
     profile?.autoSync ?? "off",
+  );
+  const [harnessEnabled, setHarnessEnabled] = useState(
+    profile?.harnessEnabled ?? false,
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -460,6 +649,7 @@ function ProfileEditor({
         apiKey: apiKey || undefined,
         importCurrentSession: !profile && provider === "chatgpt" && importCurrentSession,
         autoSync: isNative ? "off" : autoSync,
+        harnessEnabled,
       };
       await window.codexDeck.saveProfile(input);
       await onSaved(profile ? `已更新「${name.trim()}」` : `已创建「${name.trim()}」`);
@@ -617,6 +807,20 @@ function ProfileEditor({
             </span>
           </label>
         )}
+
+        <label className="check-row harness-toggle">
+          <input
+            type="checkbox"
+            checked={harnessEnabled}
+            onChange={(event) => setHarnessEnabled(event.target.checked)}
+          />
+          <span>
+            <strong>启用 AI Harness 临时故障自动续跑</strong>
+            <small>
+              Deck 运行期间监控此配置；仅在可安全重试的临时故障、静默期和冷却条件都满足时补发“继续”
+            </small>
+          </span>
+        </label>
 
         <div className="color-row">
           <span>识别色</span>
@@ -850,6 +1054,177 @@ function HistoryExchangeDialog({
       </section>
     </div>
   );
+}
+
+function HarnessDialog({
+  profiles,
+  status,
+  onClose,
+  onChanged,
+  onStatusChange,
+}: {
+  profiles: ProfileView[];
+  status: HarnessStatus;
+  onClose: () => void;
+  onChanged: (message: string) => Promise<void>;
+  onStatusChange: (status: HarnessStatus) => void;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const statusByProfile = new Map(
+    status.profiles.map((item) => [item.profileId, item]),
+  );
+
+  async function toggle(profile: ProfileView, enabled: boolean) {
+    setBusyId(profile.id);
+    setError(null);
+    try {
+      await window.codexDeck.saveProfile({
+        ...profileHarnessInput(profile, enabled),
+      });
+      await onChanged(
+        enabled
+          ? `已为「${profile.name}」启用 AI Harness`
+          : `已为「${profile.name}」关闭 AI Harness`,
+      );
+    } catch (toggleError) {
+      setError(cleanError(toggleError));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function checkNow() {
+    setChecking(true);
+    setError(null);
+    try {
+      onStatusChange(await window.codexDeck.runHarnessCheck());
+    } catch (checkError) {
+      setError(cleanError(checkError));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section
+        className="modal harness-dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="modal-head">
+          <div>
+            <span className="eyebrow">AI HARNESS</span>
+            <h3>连接与服务故障自动续跑</h3>
+          </div>
+          <button type="button" className="close-button" onClick={onClose} aria-label="关闭">
+            ×
+          </button>
+        </div>
+
+        <p className="import-intro">
+          监控各实例自己的会话库。任务因连接中断、超时、at capacity、临时限流或服务端短暂故障停下后，安全补发“继续”；正常完成、代码错误、额度耗尽和旧失败聊天都不会触发。
+        </p>
+
+        <div className="harness-policy">
+          <span>每 {status.pollSeconds} 秒检查</span>
+          <span>静默 {status.quietSeconds} 秒</span>
+          <span>冷却 {Math.round(status.cooldownSeconds / 60)} 分钟</span>
+        </div>
+
+        {status.legacyAgentDetected && (
+          <div className="harness-warning">
+            检测到旧版 CodexKeepalive 后台守护进程仍在运行。同一会话不要同时由两套 Harness 监控，否则可能重复补发“继续”。
+          </div>
+        )}
+
+        <div className="harness-profile-list">
+          {profiles.map((profile) => {
+            const item = statusByProfile.get(profile.id);
+            const enabled = Boolean(profile.harnessEnabled);
+            return (
+              <div className="harness-profile" key={profile.id}>
+                <div className="harness-profile-copy">
+                  <strong>{profile.name}</strong>
+                  <span className={`harness-state ${item?.state ?? "disabled"}`}>
+                    {describeHarnessState(item?.state ?? "disabled")}
+                  </span>
+                  {item?.lastResumeThread && item.lastResumeAt && (
+                    <small>
+                      最近续跑：{item.lastResumeThread} · {formatHarnessTime(item.lastResumeAt)}
+                    </small>
+                  )}
+                  {item?.lastError && <small className="harness-error">{item.lastError}</small>}
+                </div>
+                <label className="switch-control">
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    disabled={busyId === profile.id}
+                    onChange={(event) => void toggle(profile, event.target.checked)}
+                  />
+                  <span aria-hidden="true" />
+                </label>
+              </div>
+            );
+          })}
+        </div>
+
+        <p className="harness-footnote">
+          Harness 只在 Codex Deck 进程运行时工作，不修改 rollout 或会话数据库；唯一写操作是通过 Codex 自带队列投递一条消息。
+        </p>
+
+        {error && <div className="form-error">{error}</div>}
+
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
+            关闭
+          </button>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={checking || !profiles.some((profile) => profile.harnessEnabled)}
+            onClick={() => void checkNow()}
+          >
+            {checking ? "检查中…" : "立即检查"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function profileHarnessInput(profile: ProfileView, enabled: boolean): ProfileInput {
+  return {
+    id: profile.id,
+    name: profile.name,
+    color: profile.color,
+    provider: profile.provider,
+    baseUrl: profile.baseUrl,
+    model: profile.model,
+    autoSync: profile.autoSync,
+    harnessEnabled: enabled,
+  };
+}
+
+function describeHarnessState(state: HarnessStatus["profiles"][number]["state"]): string {
+  switch (state) {
+    case "monitoring":
+      return "监控中";
+    case "waiting-network":
+      return "等待网络恢复";
+    case "unsupported":
+      return "找不到 Codex 队列工具";
+    case "error":
+      return "检查异常";
+    default:
+      return "未启用";
+  }
+}
+
+function formatHarnessTime(value: string): string {
+  return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
 function CcSwitchImportDialog({
